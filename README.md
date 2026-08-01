@@ -33,9 +33,9 @@ Tres modulos independientes que se comunican solo a traves del paquete
 
 ```
         ┌──────────────┐  tokens de sesion   ┌──────────────┐
-        │    CASINO    │────────────────────▶│     MESA     │
+        │    CASINO    │───────────────────▶│     MESA     │
         │              │                     │              │
-        │ cuentas      │◀────────────────────│ saldos       │
+        │ cuentas      │◀───────────────────│ saldos       │
         │ bots (vers.) │  resultados/stats   │ turnos       │
         │ ranking      │                     │ ciegas       │
         └──────────────┘                     │ conexiones   │
@@ -78,7 +78,7 @@ pokerFight/
 │   └── bot/                    # Cliente CLI para jugar a mano
 │
 ├── internal/                   # Codigo privado del proyecto
-│   ├── protocolo/              # ⭐ Contrato compartido (no importa a nadie)
+│   ├── protocolo/              # Contrato compartido (no importa a nadie)
 │   │   ├── carta.go            # Carta, Rango, Palo, Mano
 │   │   ├── accion.go           # Accion, Etapa, AccionSegura
 │   │   ├── mensajes.go         # MensajeMesa, MensajeBot, EstadoPublico
@@ -104,14 +104,14 @@ pokerFight/
 │   │
 │   └── almacen/                # Persistencia (JSON hoy, SQLite despues)
 │
-├── pkg/botsdk/                 # ⭐ Libreria publica para escribir bots en Go
+├── pkg/botsdk/                 # Libreria publica para escribir bots en Go
 │
 ├── bots/                       # Bots de ejemplo / sparring
 │   ├── aleatorio/
 │   └── conservador/
 │
 ├── docs/
-│   ├── interfaces.md           # ⭐ Documento primario del proyecto
+│   ├── interfaces.md           # Documento primario del proyecto
 │   ├── protocolo.md            # Mensajes crudos con ejemplos
 │   ├── reglas.md               # Reglas de poker implementadas
 │   └── prompts/                # Documentacion obligatoria de prompts de IA
