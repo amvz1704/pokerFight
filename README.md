@@ -31,7 +31,7 @@ propios jugadores.
 Tres modulos independientes que se comunican solo a traves del paquete
 `protocolo`. Ninguno importa al otro directamente.
 
-```
+```txt
         ┌──────────────┐  tokens de sesion   ┌──────────────┐
         │    CASINO    │───────────────────▶│     MESA     │
         │              │                     │              │
@@ -59,7 +59,7 @@ Tres modulos independientes que se comunican solo a traves del paquete
 ```
 
 | Modulo | Responsabilidad | No hace |
-|--------|-----------------|---------|
+| -------- | ----------------- | --------- |
 | **Crupier** | Baraja, reparte, administra el pozo, decide la mano ganadora | No conoce la red ni las cuentas |
 | **Mesa** | Saldos, turnos, ciegas, validacion de acciones, conexiones | No evalua manos ni guarda cuentas |
 | **Casino** | Cuentas, sesiones, bots y su versionado, estadisticas, ranking | No juega |
@@ -70,7 +70,7 @@ depender de que la Mesa este lista.
 
 ## Estructura del repositorio
 
-```
+```txt
 pokerFight/
 ├── cmd/                        # Binarios (punto de entrada, sin logica)
 │   ├── mesa/                   # Servidor de mesa
@@ -211,7 +211,7 @@ En **cualquier otro lenguaje**: abri un socket TCP y hablá JSON Lines. Ver
 TCP con un objeto JSON por linea. Elegido para que sea agnostico del lenguaje
 y depurable con `nc`.
 
-```
+```txt
 bot  → mesa   {"tipo":"saludo","version":"1.0.0","token":"..."}
 mesa → bot    {"tipo":"mano_inicio","cartas":[...],"estado":{...}}
 mesa → bot    {"tipo":"solicitar_accion","acciones_validas":["fold","call","raise"],"timeout_ms":2000,"estado":{...}}
@@ -266,7 +266,7 @@ las interfaces ya cerradas.
 ### Especificaciones funcionales
 
 | # | Especificacion | Modulo | Estado |
-|---|----------------|--------|--------|
+| --- | ---------------- | -------- | -------- |
 | 1 | Conectarse por internet | Mesa | ⏳ |
 | 2 | Registrarse y mantener sesion durante un juego | Casino | ⏳ |
 | 3 | Conectar su bot a la mesa | Mesa + Casino | ⏳ |
@@ -295,7 +295,7 @@ Detalle completo en [`CONTRIBUTING.md`](CONTRIBUTING.md).
 ## Equipo y fechas
 
 | Persona | Rol | Modulo |
-|---------|-----|--------|
+| --------- | ----- | -------- |
 | Lucas | Documentacion explicita — bastion del proyecto | Mesa |
 | Enzo | Experiencia acreditada en Balatro | Crupier |
 | Gandy | — | Crupier |
@@ -306,7 +306,7 @@ Precedentes y consultores: [@ezzzzzzno](https://github.com/) (poker),
 [@lucats](https://github.com/) (apuestas), MIT PokerBots.
 
 | Entregable | Fecha |
-|------------|-------|
+| ------------ | ------- |
 | Mesa (interfaces definidas si o si) | 01/08/26 |
 | Crupier | 02/08/26 |
 | Casino | 02/08/26 |
@@ -318,7 +318,7 @@ aplace: el resto del equipo depende de ellas para avanzar en paralelo.
 ## Documentacion
 
 | Documento | Contenido |
-|-----------|-----------|
+| ----------- | ----------- |
 | [`docs/interfaces.md`](docs/interfaces.md) | Contratos entre modulos. **Documento primario.** |
 | [`docs/protocolo.md`](docs/protocolo.md) | Mensajes crudos con ejemplos |
 | [`docs/reglas.md`](docs/reglas.md) | Reglas de poker implementadas |
