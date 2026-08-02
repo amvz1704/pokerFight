@@ -1,6 +1,3 @@
-// Package protocolo define los tipos y mensajes compartidos entre el
-// Crupier, la Mesa y los Bots. Es la ÚNICA dependencia comun entre los tres
-// modulos: nadie importa a otro modulo directamente, todos hablan protocolo.
 package protocolo
 
 import "fmt"

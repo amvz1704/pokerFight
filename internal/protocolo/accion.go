@@ -1,3 +1,6 @@
+// Package protocolo define los tipos y mensajes compartidos entre el
+// Crupier, la Mesa y los Bots. Es la ÚNICA dependencia comun entre los tres
+// modulos: nadie importa a otro modulo directamente, todos hablan protocolo.
 package protocolo
 
 // TipoAccion es la jugada que un bot puede declarar en su turno.
