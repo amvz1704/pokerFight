@@ -241,10 +241,10 @@ las interfaces ya cerradas.
 ### Crupier
 
 - [x] Mazo y barajado criptografico
-- [ ] Entrega de cartas iniciales — 4h
-- [ ] Mesa inicial y cartas posteriores — 2h
-- [ ] Administracion del pozo (incluye pozos laterales) — 3h
-- [ ] Decision de mano ganadora — 4h
+- [x] Entrega de cartas iniciales — 4h
+- [x] Mesa inicial y cartas posteriores — 2h
+- [x] Administracion del pozo (incluye pozos laterales) — 3h
+- [x] Decision de mano ganadora — 4h
 
 ### Mesa
 
@@ -272,11 +272,11 @@ las interfaces ya cerradas.
 | 3 | Conectar su bot a la mesa | Mesa + Casino | ⏳ |
 | 4 | Registrar y guardar estadisticas de los bots | Casino | ⏳ |
 | 5 | Decidir la opcion segura ante omision (check/fold) | Protocolo | ✅ |
-| 6 | Repartir cartas a cada usuario | Crupier | ⏳ |
+| 6 | Repartir cartas a cada usuario | Crupier | ✅ |
 | 7 | Contabilidad de apuestas | Mesa | ⏳ |
-| 8 | Repartir cartas comunes | Crupier | ⏳ |
+| 8 | Repartir cartas comunes | Crupier | ✅ |
 | 9 | Turnos y apuestas individuales (SB / BB / D) | Mesa | ⏳ |
-| 10 | Decidir el ganador de la partida | Crupier | ⏳ |
+| 10 | Decidir el ganador de la partida | Crupier | ✅ |
 
 ## Reglas del equipo
 

@@ -100,10 +100,10 @@ orquesta llama a `casino.RegistrarResultado`.
 
 | Ref | Archivo | Que falta | Estimado | Responsable |
 |-----|---------|-----------|----------|-------------|
-| Crupier #1 | `crupier/baraja.go` | ya implementado | 4h | Enzo |
-| Crupier #2 | `crupier/crupier.go` | reparto inicial y comunitarias | 2h | Enzo / Gandy |
-| Crupier #3 | `crupier/pozo.go` | `Descomponer` (pozos laterales) | 3h | Gandy |
-| Crupier #4 | `crupier/evaluador.go` | evaluacion de 5 y mejor de 7 | 4h | Enzo |
+| Crupier #1 | `crupier/baraja.go` | Ya implementado | 4h | Enzo |
+| Crupier #2 | `crupier/crupier.go` | Ya implementado reparto inicial y comunitarias | 2h | Enzo / Gandy |
+| Crupier #3 | `crupier/pozo.go` | Ya implementado (pozos laterales) | 3h | Gandy |
+| Crupier #4 | `crupier/evaluador.go` | Ya implementada evaluacion de 5 en 7 | 4h | Enzo |
 | Mesa #1 | `mesa/turnos.go`, `mesa/mesa.go` | turnos, ciegas, rondas | 5h | Lucas |
 | Mesa #2 | `mesa/saldo.go` | contabilidad de fichas | 4h | Lucas |
 | Mesa #3 | `mesa/servidor.go` | conexiones TCP | 5h | Alvaro |

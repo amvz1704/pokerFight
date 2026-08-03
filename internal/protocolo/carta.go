@@ -6,10 +6,10 @@ import "fmt"
 type Palo uint8
 
 const (
-	Treboles  Palo = iota // c
-	Diamantes             // d
-	Corazones             // h
-	Picas                 // s
+	Treboles  Palo = iota // 0 = c (tréboles)
+	Diamantes             // 1 = d (diamantes)
+	Corazones             // 2 = h (corazones)
+	Picas                 // 3 = s (espadas)
 )
 
 var simbolosPalo = [4]rune{'c', 'd', 'h', 's'}
