@@ -20,11 +20,11 @@ type Jugador struct {
 	Nombre         string              // El nombre a mostrar del jugador
 	Saldo          uint64              // El saldo actual del jugador (mayor o igual a 0)
 	ApuestaRonda   uint64              // La apuesta realizada en la ronda actual (mayor o igual a 0)
-	CartasPrivadas protocolo.Mano      // La mano (cartas privadas) del jugador
+	CartasPrivadas protocolo.Mano      // La mano (cartas privadas) del jugador. Nota: Este tipo de dato es una estructura, se debe inicializar con 0 antes de inciar la ronda para indicar que el jugador aún no tiene cartas.
 	Activo         bool                // Verdadero si el jugador aún puede participar en el juego
 	AllIn          bool                // Verdadero si el jugador ha realizado un all in en la ronda actual. Si es verdadero el jugador no puede realizar más acciones en la ronda actual.
 	Silla          int8                // Es la posición del jugador en la mesa, va del 0 a MaxJugadores - 1, en sentido horario. Si el jugador no está en la mesa (desconectado), es -1. La silla 0 es del dealer (jugador), la silla 1 de la ciega menor y la silla 2 de la ciega mayor (si hay tres o más jugadores).
-	Conexion       ConexionMesaJugador // Es la conexion de la mesa con el jugador.
+	Conexion       ConexionMesaJugador // Es la conexion de la mesa con el jugador. Nota: Este tipo de dato es una interfaz.
 }
 
 func NuevoJugador(id string, nombre string, saldo uint64, silla int8, c ConexionMesaJugador) *Jugador {
