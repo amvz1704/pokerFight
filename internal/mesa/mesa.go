@@ -7,6 +7,7 @@ package mesa
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/amvz1704/pokerFight/internal/crupier"
 	"github.com/amvz1704/pokerFight/internal/protocolo"
@@ -24,6 +25,20 @@ type Jugador struct {
 	AllIn          bool                // Verdadero si el jugador ha realizado un all in en la ronda actual. Si es verdadero el jugador no puede realizar más acciones en la ronda actual.
 	Silla          int8                // Es la posición del jugador en la mesa, va del 0 a MaxJugadores - 1, en sentido horario. Si el jugador no está en la mesa (desconectado), es -1. La silla 0 es del dealer (jugador), la silla 1 de la ciega menor y la silla 2 de la ciega mayor (si hay tres o más jugadores).
 	Conexion       ConexionMesaJugador // Es la conexion de la mesa con el jugador.
+}
+
+func NuevoJugador(id string, nombre string, saldo uint64, silla int8, c ConexionMesaJugador) *Jugador {
+	return &Jugador{
+		ID:             id,
+		Nombre:         nombre,
+		Saldo:          saldo,
+		ApuestaRonda:   0,
+		CartasPrivadas: protocolo.Mano{}, // Se intancian las cartas como 2 cartas vacías. Se asignarán al iniciar una ronda.
+		Activo:         true,             // Inica activo, se desactiva si se retira o pierde todas sus fichas.
+		AllIn:          false,            // Inicia sin all in, se activa si realiza un all in en la ronda.
+		Silla:          silla,            // Su posición en el arreglo de jugadores de la mesa.
+		Conexion:       c,
+	}
 }
 
 // Configuración de la mesa. Se define al crear la mesa y no cambia durante la partida.
@@ -78,19 +93,44 @@ type Mesa struct {
 // Función para crear una nueva mesa. Devuelve una instancia de MesaInterface (un puntero a Mesa).
 func NuevaMesa(id string, cfgMesa ConfigMesa, cfgPartida ConfigPartida, cpr crupier.Crupier) MesaInterface {
 	return &Mesa{
-		ID:          id,         // ID definido por el casino, único para cada mesa.
-		CfgMesa:     cfgMesa,    // Configuración definida antes de crear la mesa.
-		CfgPartida:  cfgPartida, // Configuración de la partida definida antes de crear la mesa.
-		CrupierMesa: cpr,        // Un crupier que tenga la lógica del juego. Permite modificaciones al poker clásico para futuras implementaciones.
-		Jugadores:   nil,        // Nulo al inicio, se van agregando jugadores a medida que se sientan en la mesa.
-		Boton:       0,          // Valor por defecto, se actualiza en cada ronda.
-		Pozo:        nil,        // Nulo al inicio, se crea al iniciar la partida y se mantiene todo el juego.
+		ID:          id,                                     // ID definido por el casino, único para cada mesa.
+		CfgMesa:     cfgMesa,                                // Configuración definida antes de crear la mesa.
+		CfgPartida:  cfgPartida,                             // Configuración de la partida definida antes de crear la mesa.
+		CrupierMesa: cpr,                                    // Un crupier que tenga la lógica del juego. Permite modificaciones al poker clásico para futuras implementaciones.
+		Jugadores:   make([]*Jugador, cfgMesa.MaxJugadores), // Vacío al inicio, se agregan jugadores a medida que se sientan en la mesa.
+		Boton:       0,                                      // Valor por defecto, se actualiza en cada ronda.
+		Pozo:        nil,                                    // Nulo al inicio, se crea al iniciar la partida y se mantiene todo el juego.
 	}
 }
 
-// TODO: Implmentar las funciones de MesaInterface para Mesa.
+// SentarJugador sienta a un jugador (bot) a la mesa de juego. Si no hay lista de jugadores disponible, devuelve error. Si la mesa está
+// llena, devuelve error. Si el jugador ya estaba sentado, devuelve error.
 func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionMesaJugador) error {
-	panic("no implementado: ver docs/interfaces.md, tarea Mesa #3")
+	// Para evitar desreferenciar un puntero nulo
+	if m.Jugadores == nil {
+		return fmt.Errorf("Error: La mesa [ID: %s] no ha sido correctamente inicializada (La lista de jugadores no existe).\n", m.ID)
+	}
+	// Inicializamos una variable para buscar la primera silla libre.
+	sillaLibre := -1
+	// Recorremos todas las sillas para evitar que se una un jugador 2 veces. También, para buscar la silla libre.
+	for i, jugador := range m.Jugadores {
+		// Si la silla no está vacia, revisamos que el jugador no se vaya a sentar 2 veces.
+		if jugador != nil {
+			if jugador.ID == idJugador {
+				return fmt.Errorf("Error: El jugador %s [ID: %s] ya está sentado en la mesa [ID: %s].\n", nombreJugador, idJugador, m.ID)
+			}
+		} else if sillaLibre == -1 { // Si la silla está vacia, se guarda la primera silla libre que se encuentre.
+			sillaLibre = i
+		}
+	}
+	// Si no habían sillas libres
+	if sillaLibre == -1 {
+		return fmt.Errorf("Error: La mesa [ID: %s] está llena. El jugador %s [ID: %s] no pudo sentarse.\n", m.ID, nombreJugador, idJugador)
+	}
+	// Sentamos al jugador
+	m.Jugadores[sillaLibre] = NuevoJugador(idJugador, nombreJugador, m.CfgPartida.StackInicial, int8(sillaLibre), c)
+	fmt.Printf("Mesa [ID: %s]: El jugador %s [ID: %s] se ha sentado en la silla %d.\n", m.ID, nombreJugador, idJugador, sillaLibre)
+	return nil
 }
 
 func (m *Mesa) LevantarJugador(idJugador string) error {
