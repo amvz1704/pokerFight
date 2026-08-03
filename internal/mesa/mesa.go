@@ -74,7 +74,7 @@ type ResumenPartida struct {
 // representar las funciones de una mesa y para facilitar la integración con Casino y con las pruebas.
 type MesaInterface interface {
 	SentarJugador(idJugador string, nombreJugador string, c ConexionMesaJugador) error // Sienta a un jugador (bot) a una mesa de juego. Si la mesa está llena, devuelve un error. Si el jugador ya está sentado y conectado, devuelve un error. Si el jugador está sentado pero desconectado, lo vuelve a conectar. Si el jugador no está sentado, lo sienta en la siguiente silla disponible.
-	LevantarJugador(idJugador string) error                                            // Levanta a un jugador de la mesa de jugado, pero aún no lo desconecta. Es decir, puede permanecer como espectador. Si el jugador no está sentado, devuelve un error.
+	LevantarJugador(idJugador string) error                                            // Levanta a un jugador de la mesa y lo desconecta. Si el jugador no está sentado, devuelve un error.
 	Jugar(ctx context.Context) (ResumenPartida, error)                                 // Inicia la partida y corre las rondas hasta que se cumpla la condición de finalización. Devuelve el resumen de la partida o un error si la partida no pudo completarse. La partida puede ser cancelada mediante el contexto e igualmente devolver un resumen.
 	Estado() protocolo.EstadoPublico
 }
@@ -134,7 +134,25 @@ func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionM
 }
 
 func (m *Mesa) LevantarJugador(idJugador string) error {
-	panic("no implementado: ver docs/interfaces.md, tarea Mesa #3")
+	// Variable para realizar la búsqueda
+	posicionJugador := -1
+	// Se recorre la lista de jugadores en busca del ID del jugador a levantar
+	for i, jugador := range m.Jugadores {
+		if jugador != nil {
+			if jugador.ID == idJugador {
+				posicionJugador = i
+				break
+			}
+		}
+	}
+	// En caso de que el jugador no se encuentre en la mesa
+	if posicionJugador == -1 {
+		return fmt.Errorf("Error: No se puede levantar al jugador [ID: %s] de la mesa [ID: %s] porque el jugador no se encuentra en la mesa.\n", idJugador, m.ID)
+	}
+	// Se cierra la conexión del jugador con la mesa y se elimina el puntero
+	m.Jugadores[posicionJugador].Conexion.Cerrar()
+	m.Jugadores[posicionJugador] = nil
+	return nil
 }
 
 func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
