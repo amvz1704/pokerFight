@@ -13,6 +13,11 @@ import (
 	"github.com/amvz1704/pokerFight/internal/protocolo"
 )
 
+type JugadorInterface interface {
+	AsignarCartasPrivadas(mano protocolo.Mano)
+	SolicitarApuesta()
+}
+
 // Es la representación de un jugador en la mesa. Contiene los datos necesarios
 // para que pueda jugar y ser identificado
 type Jugador struct {
@@ -87,7 +92,7 @@ type Mesa struct {
 	CrupierMesa crupier.Crupier // El crupier de la mesa. Contiene la lógica del juego.
 	Jugadores   []*Jugador      // Lista de los jugadores sentados en la mesa. Modificable en tiempo real.
 	Boton       uint8           // La posición del jugador que tiene el botón (dealer) en la mesa. Se actualiza en cada ronda.
-	Pozo        *crupier.Pozo   // El pozo de la mesa. Se actualiza en cada ronda y etapa de la ronda.
+	Pozo        *crupier.Pozo
 }
 
 // Función para crear una nueva mesa. Devuelve una instancia de MesaInterface (un puntero a Mesa).
@@ -99,12 +104,13 @@ func NuevaMesa(id string, cfgMesa ConfigMesa, cfgPartida ConfigPartida, cpr crup
 		CrupierMesa: cpr,                                    // Un crupier que tenga la lógica del juego. Permite modificaciones al poker clásico para futuras implementaciones.
 		Jugadores:   make([]*Jugador, cfgMesa.MaxJugadores), // Vacío al inicio, se agregan jugadores a medida que se sientan en la mesa.
 		Boton:       0,                                      // Valor por defecto, se actualiza en cada ronda.
-		Pozo:        nil,                                    // Nulo al inicio, se crea al iniciar la partida y se mantiene todo el juego.
+		Pozo:        nil,
 	}
 }
 
 // SentarJugador sienta a un jugador (bot) a la mesa de juego. Si no hay lista de jugadores disponible, devuelve error. Si la mesa está
 // llena, devuelve error. Si el jugador ya estaba sentado, devuelve error.
+// TODO: Si es posible, usar un map o reducir la complejidad a O(log(N))
 func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionMesaJugador) error {
 	// Para evitar desreferenciar un puntero nulo
 	if m.Jugadores == nil {
@@ -133,6 +139,7 @@ func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionM
 	return nil
 }
 
+// TODO: Igualmente, buscar la forma de reducir la complejidad a O(log(N))
 func (m *Mesa) LevantarJugador(idJugador string) error {
 	// Variable para realizar la búsqueda
 	posicionJugador := -1
@@ -155,10 +162,108 @@ func (m *Mesa) LevantarJugador(idJugador string) error {
 	return nil
 }
 
+// Esta función es el bucle que dará inicio a la partida en la mesa.
 func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
-	panic("no implementado: ver docs/interfaces.md, tarea Mesa #1")
+	// Mensaje de inicio
+	fmt.Printf("Mesa [ID: %s]: Iniciando juego.\n", m.ID)
+
+	// Variable de resumen de la partida
+	resumen := ResumenPartida{
+		IDMesa: m.ID,
+	}
+
+	rondaActual := int64(0)
+
+	// Loop de la partida
+	for {
+		// Vemos si hay alguna señal por procesar
+		select {
+		case <-ctx.Done():
+			return resumen, fmt.Errorf("Mesa [ID: %s]: La partida ha sido cancelada por un evento externo.\n", m.ID)
+		default:
+			// Seguir la partida
+		}
+
+		// Si la partida debe finalizar por la cantidad de rondas
+		if m.CfgPartida.CantidadRondas != -1 && rondaActual >= m.CfgPartida.CantidadRondas {
+			break
+		}
+		// Obtener los jugadores activos
+		jugadoresActivos := m.ObtenerJugadoresActivos()
+
+		// Si solo queda un jugador activo, es el ganador
+		if len(jugadoresActivos) <= 1 {
+			break
+		}
+
+		// Preparamos la mano a repartir a los jugadores
+		idMano := fmt.Sprintf("Mesa:%s-Ronda:%d", m.ID, rondaActual+1)
+
+		// Obtenemos la mano y verificamos que no hayan errores de creación
+		if err := m.CrupierMesa.NuevaMano(idMano); err != nil {
+			return resumen, fmt.Errorf("Error en Mesa [ID: %s]: El crupier no pudo iniciar la Mano [ID: %s].\n%w\n", m.ID, idMano, err)
+		}
+
+		// Obtenemos los IDs de los jugadores activos y creamos el pozo
+		idsActivos := ObtenerIdsDeJugadores(jugadoresActivos)
+		m.Pozo = crupier.NuevoPozo(idsActivos)
+
+		// Repartimos las cartas y cobramos las ciegas
+		manos, err := m.CrupierMesa.RepartirPrivadas(len(idsActivos))
+		if err != nil {
+			return resumen, fmt.Errorf("Mesa [ID: %s]: Error al repartir las cartas privadas. %w\n", m.ID, err)
+		}
+
+		for i, jugador := range jugadoresActivos {
+			jugador.CartasPrivadas = manos[i]
+		}
+
+		// Apuestas comunitarias (Pre-Flop, Flop, Turn, River)
+		// TODO: Here
+
+		// Repartición del pozo
+		// TODO: Here
+
+		// Preparar la siguiente ronda
+		m.Boton = (m.Boton + 1) % m.CfgMesa.MaxJugadores // NOTA: ¿Qué pasa si la silla está vacia?
+		rondaActual++
+
+		resumen.CantidadRondasJugadas = uint64(rondaActual)
+	}
+	return ResumenPartida{}, nil
 }
 
 func (m *Mesa) Estado() protocolo.EstadoPublico {
 	panic("no implementado: ver docs/interfaces.md, tarea Mesa #1")
+}
+
+func (m *Mesa) ObtenerJugadoresActivos() []*Jugador {
+	// Creamos el slice con 0 elementos pero capacidad para N jugadores.
+	activos := make([]*Jugador, 0, len(m.Jugadores))
+
+	// Recorremos la lista para buscar los jugadores activos
+	for _, jugador := range m.Jugadores {
+		if jugador != nil && jugador.Activo {
+			activos = append(activos, jugador)
+		}
+	}
+
+	return activos
+}
+
+// Función para obtener el ID de un array de jugadores
+func ObtenerIdsDeJugadores(jugadores []*Jugador) []string {
+	if len(jugadores) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(jugadores))
+
+	for _, jugador := range jugadores {
+		if jugador != nil {
+			ids = append(ids, jugador.ID)
+		}
+	}
+
+	return ids
 }
