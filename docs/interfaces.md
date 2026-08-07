@@ -96,6 +96,56 @@ ValidarToken func(token string) (idCuenta, nombre string, err error)
 Al terminar la partida, la Mesa devuelve un `mesa.Resumen` y quien la
 orquesta llama a `casino.RegistrarResultado`.
 
+## 4.1 Conexiones (`internal/mesa/servidor.go`)
+
+Toda conexión con un bot cumple `ConexionMesaJugador`. Hay dos
+implementaciones:
+
+| Tipo | Archivo | Uso |
+|------|---------|-----|
+| `ConexionTCP` | `mesa/servidor.go` | Real: JSON Lines sobre `net.Conn`. |
+| `ConexionPrueba` | `mesa/conexion_prueba.go` | Sin red: acciones programadas + historial de mensajes. |
+
+```go
+// Real
+s := mesa.NuevoServidor(mesa.ConfigServidor{Direccion: ":9000", TimeoutHandshakeMs: 5000}, m, casino.ValidarToken)
+s.Escuchar(ctx) // bloquea: acepta, hace handshake y llama a m.SentarJugador
+
+// De prueba
+cx := mesa.NuevaConexionPrueba("c-1", protocolo.Accion{Tipo: protocolo.Call})
+m.SentarJugador("c-1", "BotAlpha", cx)
+```
+
+Contrato de errores que la Mesa debe manejar:
+
+- `ErrTiempoAgotado`: aplicar `protocolo.AccionSegura` y sumar 1 a los timeouts.
+- `ErrJugadorAbandono` / `ErrConexionCerrada`: levantar al jugador de la mesa.
+- `protocolo.ErrAccionAusente` o acción inválida: aplicar `AccionSegura`.
+
+`ConexionTCP` recuerda el `id_mano` del último `estado` enviado y **descarta
+las acciones cuyo `id_mano` no coincida** (acciones tardías). `ParConexionesMemoria`
+devuelve dos `ConexionTCP` unidas por `net.Pipe` para probar el protocolo
+completo sin abrir puertos.
+
+## 4.2 Sillas y concurrencia
+
+`Mesa.Jugadores` es un arreglo de tamaño `MaxJugadores` indexado por silla;
+`nil` significa silla libre. `SentarJugador` toma la silla libre más baja y da
+el `StackInicial`; `LevantarJugador` cierra la conexión y libera la silla.
+
+> **Importante para Mesa #1 y #2:** `Jugadores` lo toca el Servidor desde la
+> goroutine de cada conexión mientras `Jugar` corre en otra. **Todo acceso debe
+> tomar `Mesa.Mu`**, incluido `ObtenerJugadoresActivos`, que asume que quien la
+> llama ya lo hizo.
+
+Divergencias con el contrato de `MesaInterface` que quedan por resolver:
+
+- El comentario de `SentarJugador` dice que un jugador sentado pero
+  desconectado "se vuelve a conectar"; hoy se rechaza cualquier duplicado.
+- El comentario original de `LevantarJugador` decía que el jugador podía
+  quedarse de espectador; hoy se le cierra la conexión.
+- `CfgMesa.ActualJugadores` no lo actualiza nadie.
+
 ## 5. Tareas pendientes referenciadas por los `panic`
 
 | Ref | Archivo | Que falta | Estimado | Responsable |
@@ -106,7 +156,7 @@ orquesta llama a `casino.RegistrarResultado`.
 | Crupier #4 | `crupier/evaluador.go` | Ya implementada evaluacion de 5 en 7 | 4h | Enzo |
 | Mesa #1 | `mesa/turnos.go`, `mesa/mesa.go` | turnos, ciegas, rondas | 5h | Lucas |
 | Mesa #2 | `mesa/saldo.go` | contabilidad de fichas | 4h | Lucas |
-| Mesa #3 | `mesa/servidor.go` | conexiones TCP | 5h | Alvaro |
+| Mesa #3 | `mesa/servidor.go` | Ya implementado (servidor TCP, handshake, conexión de prueba) | 5h | Alvaro |
 | Casino #1 | `casino/cuentas.go`, `almacen/json.go` | cuentas y sesiones | 3h | Jhntn |
 | Casino #2 | `casino/bots.go` | bots y versionado | 3h | Jhntn |
 | Casino #3 | `casino/puntaje.go` | ranking | 2h | Jhntn |

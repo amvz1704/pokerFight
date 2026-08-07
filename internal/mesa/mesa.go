@@ -8,6 +8,7 @@ package mesa
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/amvz1704/pokerFight/internal/crupier"
 	"github.com/amvz1704/pokerFight/internal/protocolo"
@@ -90,9 +91,15 @@ type Mesa struct {
 	CfgMesa     ConfigMesa      // Configuración de la mesa
 	CfgPartida  ConfigPartida   // Configuración de la partida
 	CrupierMesa crupier.Crupier // El crupier de la mesa. Contiene la lógica del juego.
-	Jugadores   []*Jugador      // Lista de los jugadores sentados en la mesa. Modificable en tiempo real.
+	Jugadores   []*Jugador      // Lista de los jugadores sentados en la mesa. Modificable en tiempo real. Protegida por Mu.
 	Boton       uint8           // La posición del jugador que tiene el botón (dealer) en la mesa. Se actualiza en cada ronda.
 	Pozo        *crupier.Pozo
+
+	// Mu protege a Jugadores. Hace falta porque el Servidor sienta y levanta
+	// jugadores desde la goroutine de cada conexión mientras Jugar corre en
+	// otra. Todo acceso a Jugadores debe tomarla, incluido el de Jugar,
+	// Estado y ObtenerJugadoresActivos.
+	Mu sync.Mutex
 }
 
 // Función para crear una nueva mesa. Devuelve una instancia de MesaInterface (un puntero a Mesa).
@@ -112,6 +119,9 @@ func NuevaMesa(id string, cfgMesa ConfigMesa, cfgPartida ConfigPartida, cpr crup
 // llena, devuelve error. Si el jugador ya estaba sentado, devuelve error.
 // TODO: Si es posible, usar un map o reducir la complejidad a O(log(N))
 func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionMesaJugador) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
 	// Para evitar desreferenciar un puntero nulo
 	if m.Jugadores == nil {
 		return fmt.Errorf("Error: La mesa [ID: %s] no ha sido correctamente inicializada (La lista de jugadores no existe).\n", m.ID)
@@ -141,6 +151,9 @@ func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionM
 
 // TODO: Igualmente, buscar la forma de reducir la complejidad a O(log(N))
 func (m *Mesa) LevantarJugador(idJugador string) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
 	// Variable para realizar la búsqueda
 	posicionJugador := -1
 	// Se recorre la lista de jugadores en busca del ID del jugador a levantar
@@ -189,7 +202,9 @@ func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
 			break
 		}
 		// Obtener los jugadores activos
+		m.Mu.Lock()
 		jugadoresActivos := m.ObtenerJugadoresActivos()
+		m.Mu.Unlock()
 
 		// Si solo queda un jugador activo, es el ganador
 		if len(jugadoresActivos) <= 1 {
@@ -214,9 +229,11 @@ func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
 			return resumen, fmt.Errorf("Mesa [ID: %s]: Error al repartir las cartas privadas. %w\n", m.ID, err)
 		}
 
+		m.Mu.Lock()
 		for i, jugador := range jugadoresActivos {
 			jugador.CartasPrivadas = manos[i]
 		}
+		m.Mu.Unlock()
 
 		// Apuestas comunitarias (Pre-Flop, Flop, Turn, River)
 		// TODO: Here
@@ -237,6 +254,7 @@ func (m *Mesa) Estado() protocolo.EstadoPublico {
 	panic("no implementado: ver docs/interfaces.md, tarea Mesa #1")
 }
 
+// ObtenerJugadoresActivos requiere que quien la llame ya tenga tomado Mu.
 func (m *Mesa) ObtenerJugadoresActivos() []*Jugador {
 	// Creamos el slice con 0 elementos pero capacidad para N jugadores.
 	activos := make([]*Jugador, 0, len(m.Jugadores))

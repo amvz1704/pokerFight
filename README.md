@@ -250,7 +250,7 @@ las interfaces ya cerradas.
 
 - [ ] Administracion de saldo — 4h
 - [ ] Puntaje general — 3h
-- [ ] Conexiones — 5h
+- [x] Conexiones — 5h (servidor TCP, handshake, conexion de prueba)
 
 ### Casino
 
@@ -267,9 +267,9 @@ las interfaces ya cerradas.
 
 | # | Especificacion | Modulo | Estado |
 | --- | ---------------- | -------- | -------- |
-| 1 | Conectarse por internet | Mesa | ⏳ |
+| 1 | Conectarse por internet | Mesa | ✅ |
 | 2 | Registrarse y mantener sesion durante un juego | Casino | ⏳ |
-| 3 | Conectar su bot a la mesa | Mesa + Casino | ⏳ |
+| 3 | Conectar su bot a la mesa | Mesa + Casino | 🚧 |
 | 4 | Registrar y guardar estadisticas de los bots | Casino | ⏳ |
 | 5 | Decidir la opcion segura ante omision (check/fold) | Protocolo | ✅ |
 | 6 | Repartir cartas a cada usuario | Crupier | ✅ |
@@ -277,6 +277,13 @@ las interfaces ya cerradas.
 | 8 | Repartir cartas comunes | Crupier | ✅ |
 | 9 | Turnos y apuestas individuales (SB / BB / D) | Mesa | ⏳ |
 | 10 | Decidir el ganador de la partida | Crupier | ✅ |
+
+Leyenda: ✅ listo · 🚧 parcial (falta otro modulo) · ⏳ pendiente.
+
+La #3 esta parcial: la Mesa ya acepta la conexion, hace el handshake y sienta
+al jugador (`mesa.Servidor` + `Mesa.SentarJugador`), pero falta
+`casino.ValidarToken` (Casino #1) para validar tokens de verdad; hoy el
+servidor corre en modo abierto si no se le inyecta esa funcion.
 
 ## Reglas del equipo
 
