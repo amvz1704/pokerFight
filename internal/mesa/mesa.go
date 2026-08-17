@@ -8,6 +8,7 @@ package mesa
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/amvz1704/pokerFight/internal/crupier"
@@ -27,7 +28,8 @@ type Jugador struct {
 	Saldo          uint64              // El saldo actual del jugador (mayor o igual a 0)
 	ApuestaRonda   uint64              // La apuesta realizada en la ronda actual (mayor o igual a 0)
 	CartasPrivadas protocolo.Mano      // La mano (cartas privadas) del jugador. Nota: Este tipo de dato es una estructura, se debe inicializar con 0 antes de inciar la ronda para indicar que el jugador aún no tiene cartas.
-	Activo         bool                // Verdadero si el jugador aún puede participar en el juego
+	Activo         bool                // Verdadero si el jugador aún puede participar en el juego (sigue en el torneo, no se quedó sin fichas ni se retiró de la mesa)
+	Retirado       bool                // Verdadero si el jugador hizo fold en la mano actual. Se reinicia a false al repartir cada mano nueva.
 	AllIn          bool                // Verdadero si el jugador ha realizado un all in en la ronda actual. Si es verdadero el jugador no puede realizar más acciones en la ronda actual.
 	Silla          int8                // Es la posición del jugador en la mesa, va del 0 a MaxJugadores - 1, en sentido horario. Si el jugador no está en la mesa (desconectado), es -1. La silla 0 es del dealer (jugador), la silla 1 de la ciega menor y la silla 2 de la ciega mayor (si hay tres o más jugadores).
 	Conexion       ConexionMesaJugador // Es la conexion de la mesa con el jugador. Nota: Este tipo de dato es una interfaz.
@@ -95,9 +97,18 @@ type Mesa struct {
 	Boton       uint8           // La posición del jugador que tiene el botón (dealer) en la mesa. Se actualiza en cada ronda.
 	Pozo        *crupier.Pozo
 
-	// Mu protege a Jugadores. Hace falta porque el Servidor sienta y levanta
-	// jugadores desde la goroutine de cada conexión mientras Jugar corre en
-	// otra. Todo acceso a Jugadores debe tomarla, incluido el de Jugar,
+	// --- Estado de la mano en curso, expuesto vía Estado() ------------------
+	idManoActual  string
+	etapaActual   protocolo.Etapa
+	comunitarias  []protocolo.Carta
+	apuestaActual uint64 // Apuesta más alta de la ronda de apuestas actual.
+	subidaMinima  uint64 // Incremento mínimo exigido para el próximo Raise.
+	historial     []protocolo.AccionRegistrada
+
+	// Mu protege todos los campos de arriba. Hace falta porque el Servidor
+	// sienta y levanta jugadores desde la goroutine de cada conexión mientras
+	// Jugar corre en otra, y porque Estado() se puede llamar en cualquier
+	// momento desde afuera. Todo acceso debe tomarla, incluido el de Jugar,
 	// Estado y ObtenerJugadoresActivos.
 	Mu sync.Mutex
 }
@@ -192,7 +203,7 @@ func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
 		// Vemos si hay alguna señal por procesar
 		select {
 		case <-ctx.Done():
-			return resumen, fmt.Errorf("Mesa [ID: %s]: La partida ha sido cancelada por un evento externo.\n", m.ID)
+			return m.resumenFinal(resumen), fmt.Errorf("Mesa [ID: %s]: La partida ha sido cancelada por un evento externo.\n", m.ID)
 		default:
 			// Seguir la partida
 		}
@@ -211,47 +222,413 @@ func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
 			break
 		}
 
-		// Preparamos la mano a repartir a los jugadores
-		idMano := fmt.Sprintf("Mesa:%s-Ronda:%d", m.ID, rondaActual+1)
-
-		// Obtenemos la mano y verificamos que no hayan errores de creación
-		if err := m.CrupierMesa.NuevaMano(idMano); err != nil {
-			return resumen, fmt.Errorf("Error en Mesa [ID: %s]: El crupier no pudo iniciar la Mano [ID: %s].\n%w\n", m.ID, idMano, err)
+		if err := m.jugarMano(ctx, jugadoresActivos, rondaActual+1); err != nil {
+			return m.resumenFinal(resumen), err
 		}
 
-		// Obtenemos los IDs de los jugadores activos y creamos el pozo
-		idsActivos := ObtenerIdsDeJugadores(jugadoresActivos)
-		m.Pozo = crupier.NuevoPozo(idsActivos)
-
-		// Repartimos las cartas y cobramos las ciegas
-		manos, err := m.CrupierMesa.RepartirPrivadas(len(idsActivos))
-		if err != nil {
-			return resumen, fmt.Errorf("Mesa [ID: %s]: Error al repartir las cartas privadas. %w\n", m.ID, err)
-		}
-
+		// Preparar la siguiente ronda: el botón pasa al siguiente jugador que
+		// sigue en el torneo (salta sillas vacías o de jugadores eliminados).
 		m.Mu.Lock()
-		for i, jugador := range jugadoresActivos {
-			jugador.CartasPrivadas = manos[i]
+		if siguiente, ok := m.siguienteSillaOcupada(m.Boton); ok {
+			m.Boton = siguiente
 		}
 		m.Mu.Unlock()
 
-		// Apuestas comunitarias (Pre-Flop, Flop, Turn, River)
-		// TODO: Here
-
-		// Repartición del pozo
-		// TODO: Here
-
-		// Preparar la siguiente ronda
-		m.Boton = (m.Boton + 1) % m.CfgMesa.MaxJugadores // NOTA: ¿Qué pasa si la silla está vacia?
 		rondaActual++
-
 		resumen.CantidadRondasJugadas = uint64(rondaActual)
 	}
-	return ResumenPartida{}, nil
+	return m.resumenFinal(resumen), nil
 }
 
+// jugarMano corre una mano completa: ciegas, preflop, flop, turn, river y
+// reparto del pozo. No avanza el botón: eso lo hace el llamador (Jugar).
+func (m *Mesa) jugarMano(ctx context.Context, jugadoresActivos []*Jugador, numeroMano int64) error {
+	idMano := fmt.Sprintf("Mesa:%s-Ronda:%d", m.ID, numeroMano)
+
+	if err := m.CrupierMesa.NuevaMano(idMano); err != nil {
+		return fmt.Errorf("Error en Mesa [ID: %s]: El crupier no pudo iniciar la Mano [ID: %s].\n%w\n", m.ID, idMano, err)
+	}
+
+	idsActivos := ObtenerIdsDeJugadores(jugadoresActivos)
+
+	m.Mu.Lock()
+	m.Pozo = crupier.NuevoPozo(idsActivos)
+	m.idManoActual = idMano
+	m.etapaActual = protocolo.PreFlop
+	m.comunitarias = nil
+	m.historial = nil
+	for _, j := range jugadoresActivos {
+		j.Retirado = false
+		j.AllIn = false
+		j.ApuestaRonda = 0
+	}
+	m.Mu.Unlock()
+
+	manos, err := m.CrupierMesa.RepartirPrivadas(len(idsActivos))
+	if err != nil {
+		return fmt.Errorf("Mesa [ID: %s]: Error al repartir las cartas privadas. %w\n", m.ID, err)
+	}
+
+	m.Mu.Lock()
+	for i, jugador := range jugadoresActivos {
+		jugador.CartasPrivadas = manos[i]
+	}
+
+	sillaChica, sillaGrande := m.posicionesCiegas(len(jugadoresActivos))
+	m.aportar(m.Jugadores[sillaChica], m.CfgPartida.CiegaMenor)
+	m.aportar(m.Jugadores[sillaGrande], m.CfgPartida.CiegaMayor)
+	m.apuestaActual = m.CfgPartida.CiegaMayor
+	m.subidaMinima = m.CfgPartida.CiegaMayor
+	primerEnHablar := m.primerEnHablarPreflop(len(jugadoresActivos), sillaChica, sillaGrande)
+	m.Mu.Unlock()
+
+	m.enviarManoInicio(jugadoresActivos)
+
+	if err := m.rondaApuestas(ctx, protocolo.PreFlop, primerEnHablar); err != nil {
+		return err
+	}
+
+	for _, etapa := range []protocolo.Etapa{protocolo.Flop, protocolo.Turn, protocolo.River} {
+		m.Mu.Lock()
+		enMano := m.contarEnMano()
+		m.Mu.Unlock()
+		if enMano <= 1 {
+			break
+		}
+
+		cartas, err := m.CrupierMesa.RepartirComunitarias(etapa)
+		if err != nil {
+			return fmt.Errorf("Mesa [ID: %s]: Error al repartir comunitarias de %s. %w\n", m.ID, etapa, err)
+		}
+
+		m.Mu.Lock()
+		m.comunitarias = append(m.comunitarias, cartas...)
+		m.etapaActual = etapa
+		for _, j := range jugadoresActivos {
+			j.ApuestaRonda = 0
+		}
+		m.apuestaActual = 0
+		m.subidaMinima = m.CfgPartida.CiegaMayor
+		primerPost, hayQuienActue := m.primerEnManoDesdeBoton()
+		m.Mu.Unlock()
+
+		m.difundirEstado(-1)
+
+		if !hayQuienActue {
+			continue
+		}
+		if err := m.rondaApuestas(ctx, etapa, primerPost); err != nil {
+			return err
+		}
+	}
+
+	return m.repartirPozo(jugadoresActivos, idMano)
+}
+
+// repartirPozo llega al showdown (o al cierre por fold de todos menos uno),
+// pide al Crupier que decida ganadores y reparte las fichas.
+func (m *Mesa) repartirPozo(jugadoresActivos []*Jugador, idMano string) error {
+	m.Mu.Lock()
+	m.etapaActual = protocolo.Showdown
+	var participantes []crupier.Participante
+	for _, j := range jugadoresActivos {
+		if j.Activo && !j.Retirado {
+			participantes = append(participantes, crupier.Participante{ID: j.ID, Mano: j.CartasPrivadas})
+		}
+	}
+	comunitarias := append([]protocolo.Carta(nil), m.comunitarias...)
+	pozo := m.Pozo
+	m.Mu.Unlock()
+
+	var resultado protocolo.ResultadoMano
+	if len(participantes) == 1 {
+		// Todos los demás se retiraron: se gana el pozo sin showdown. No se
+		// evalúan manos porque puede no haber comunitarias repartidas (fold
+		// preflop).
+		resultado = protocolo.ResultadoMano{
+			IDMano:       idMano,
+			Comunitarias: comunitarias,
+			Repartos:     []protocolo.Reparto{{IDJugador: participantes[0].ID, Monto: pozo.Total()}},
+		}
+	} else {
+		var err error
+		resultado, err = m.CrupierMesa.DecidirGanadores(participantes, comunitarias, pozo)
+		if err != nil {
+			return fmt.Errorf("Mesa [ID: %s]: Error al decidir ganadores de la Mano [ID: %s]. %w\n", m.ID, idMano, err)
+		}
+	}
+
+	m.Mu.Lock()
+	for _, r := range resultado.Repartos {
+		for _, j := range jugadoresActivos {
+			if j.ID == r.IDJugador && r.Monto > 0 {
+				j.Saldo += uint64(r.Monto)
+			}
+		}
+	}
+	// Quien se queda sin fichas sale del torneo (pero no se desconecta: puede
+	// quedar de espectador, LevantarJugador es una acción explícita).
+	for _, j := range jugadoresActivos {
+		if j.Saldo == 0 {
+			j.Activo = false
+		}
+	}
+	m.Mu.Unlock()
+
+	m.enviarManoFin(jugadoresActivos, resultado)
+	return nil
+}
+
+// resumenFinal arma la clasificación final ordenando a todos los jugadores
+// sentados por saldo descendente.
+func (m *Mesa) resumenFinal(resumen ResumenPartida) ResumenPartida {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
+	ordenados := make([]*Jugador, 0, len(m.Jugadores))
+	for _, j := range m.Jugadores {
+		if j != nil {
+			ordenados = append(ordenados, j)
+		}
+	}
+	sort.Slice(ordenados, func(a, b int) bool { return ordenados[a].Saldo > ordenados[b].Saldo })
+
+	resumen.Posiciones = make([]ResumenJugador, 0, len(ordenados))
+	for i, j := range ordenados {
+		resumen.Posiciones = append(resumen.Posiciones, ResumenJugador{
+			IDJugador:  j.ID,
+			Posicion:   i + 1,
+			SaldoFinal: j.Saldo,
+		})
+	}
+	return resumen
+}
+
+// contarEnMano cuenta cuántos jugadores siguen en la mano actual (no
+// hicieron fold). Requiere Mu tomado.
+func (m *Mesa) contarEnMano() int {
+	n := 0
+	for _, j := range m.Jugadores {
+		if j != nil && j.Activo && !j.Retirado {
+			n++
+		}
+	}
+	return n
+}
+
+// rondaApuestas ejecuta una ronda de apuestas de la etapa dada, empezando en
+// primerEnHablar y recorriendo las sillas en sentido horario. Sigue hasta que
+// todos los jugadores en mano y no all-in igualaron la apuesta actual (o se
+// retiraron), o hasta que quede uno solo en mano.
+func (m *Mesa) rondaApuestas(ctx context.Context, etapa protocolo.Etapa, primerEnHablar uint8) error {
+	m.Mu.Lock()
+	pendientes := make(map[uint8]bool)
+	for silla, j := range m.Jugadores {
+		if j != nil && j.Activo && !j.Retirado && !j.AllIn {
+			pendientes[uint8(silla)] = true
+		}
+	}
+	m.Mu.Unlock()
+
+	silla := primerEnHablar
+	for len(pendientes) > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		m.Mu.Lock()
+		if m.contarEnMano() <= 1 {
+			m.Mu.Unlock()
+			return nil
+		}
+		j := m.Jugadores[silla]
+		debeActuar := pendientes[silla] && j != nil && j.Activo && !j.Retirado && !j.AllIn
+		m.Mu.Unlock()
+
+		if !debeActuar {
+			delete(pendientes, silla)
+			siguiente, ok := m.siguienteSillaOcupadaConLock(silla)
+			if !ok {
+				return nil
+			}
+			silla = siguiente
+			continue
+		}
+
+		delete(pendientes, silla)
+		m.turnoJugador(j, etapa, pendientes)
+
+		siguiente, ok := m.siguienteSillaOcupadaConLock(silla)
+		if !ok {
+			return nil
+		}
+		silla = siguiente
+	}
+	return nil
+}
+
+// siguienteSillaOcupadaConLock es siguienteSillaOcupada tomando Mu, para
+// usarla desde rondaApuestas sin mantener el lock durante toda la ronda.
+func (m *Mesa) siguienteSillaOcupadaConLock(desde uint8) (uint8, bool) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.siguienteSillaOcupada(desde)
+}
+
+// turnoJugador le pide una acción a j, la valida y la aplica. Si reabre la
+// ronda (subida completa), agrega de vuelta a pendientes a los demás
+// jugadores en mano que no están all-in.
+func (m *Mesa) turnoJugador(j *Jugador, etapa protocolo.Etapa, pendientes map[uint8]bool) {
+	m.Mu.Lock()
+	pendiente := int64(m.apuestaActual) - int64(j.ApuestaRonda)
+	validas := accionesValidas(j, m.apuestaActual)
+	estado := m.estadoSinLock()
+	apuestaActual, subidaMinima, timeout := m.apuestaActual, m.subidaMinima, m.CfgMesa.Timeout
+	silla := uint8(j.Silla)
+	m.Mu.Unlock()
+
+	solicitud := protocolo.MensajeMesa{
+		Tipo:            protocolo.MsgSolicitarAccion,
+		Version:         protocolo.VersionProtocolo,
+		Estado:          &estado,
+		AccionesValidas: validas,
+		TimeoutMs:       int(timeout),
+	}
+
+	accion := protocolo.AccionSegura(pendiente)
+	if err := j.Conexion.EnviarMensaje(solicitud, timeout); err == nil {
+		if recibida, err := j.Conexion.SolicitarAccion(timeout); err == nil {
+			if esAccionValida(j, recibida, apuestaActual, subidaMinima) {
+				accion = recibida
+			}
+		} else if err == ErrJugadorAbandono {
+			accion = protocolo.Accion{Tipo: protocolo.Fold}
+		}
+		// Cualquier otro error (timeout, conexión cerrada) deja la acción
+		// segura ya calculada arriba.
+	}
+
+	m.Mu.Lock()
+	apuestaAntes := m.apuestaActual
+	reabre := m.procesarAccion(j, accion)
+	m.historial = append(m.historial, protocolo.AccionRegistrada{IDJugador: j.ID, Etapa: etapa, Accion: accion})
+	if reabre && m.apuestaActual > apuestaAntes {
+		for s, jj := range m.Jugadores {
+			if uint8(s) == silla {
+				continue
+			}
+			if jj != nil && jj.Activo && !jj.Retirado && !jj.AllIn {
+				pendientes[uint8(s)] = true
+			}
+		}
+	}
+	m.Mu.Unlock()
+
+	m.difundirEstado(int(silla))
+}
+
+// enviarManoInicio manda a cada jugador sus cartas privadas junto al estado
+// inicial de la mano. Los errores de envío se ignoran: si un bot está
+// desconectado, su turno se resolverá con la acción segura.
+func (m *Mesa) enviarManoInicio(jugadores []*Jugador) {
+	m.Mu.Lock()
+	estado := m.estadoSinLock()
+	timeout := m.CfgMesa.Timeout
+	m.Mu.Unlock()
+
+	for _, j := range jugadores {
+		mano := j.CartasPrivadas
+		msg := protocolo.MensajeMesa{
+			Tipo:    protocolo.MsgManoInicio,
+			Version: protocolo.VersionProtocolo,
+			Cartas:  &mano,
+			Estado:  &estado,
+		}
+		_ = j.Conexion.EnviarMensaje(msg, timeout)
+	}
+}
+
+// enviarManoFin manda a cada jugador el resultado de la mano (repartos,
+// cartas mostradas, descripciones).
+func (m *Mesa) enviarManoFin(jugadores []*Jugador, resultado protocolo.ResultadoMano) {
+	timeout := m.CfgMesa.Timeout
+	msg := protocolo.MensajeMesa{
+		Tipo:      protocolo.MsgManoFin,
+		Version:   protocolo.VersionProtocolo,
+		Resultado: &resultado,
+	}
+	for _, j := range jugadores {
+		_ = j.Conexion.EnviarMensaje(msg, timeout)
+	}
+}
+
+// difundirEstado manda un estado actualizado a todos los jugadores sentados,
+// menos al de exceptoSilla (quien acaba de actuar ya conoce el resultado de
+// su propia acción). Pasar -1 para avisar a todos, por ejemplo al abrir una
+// calle nueva.
+func (m *Mesa) difundirEstado(exceptoSilla int) {
+	m.Mu.Lock()
+	estado := m.estadoSinLock()
+	jugadores := make([]*Jugador, len(m.Jugadores))
+	copy(jugadores, m.Jugadores)
+	timeout := m.CfgMesa.Timeout
+	m.Mu.Unlock()
+
+	msg := protocolo.MensajeMesa{Tipo: protocolo.MsgEstado, Version: protocolo.VersionProtocolo, Estado: &estado}
+	for silla, j := range jugadores {
+		if j == nil || silla == exceptoSilla {
+			continue
+		}
+		_ = j.Conexion.EnviarMensaje(msg, timeout)
+	}
+}
+
+// estadoSinLock arma la vista pública de la mesa a partir del estado interno.
+// Requiere Mu tomado.
+func (m *Mesa) estadoSinLock() protocolo.EstadoPublico {
+	jugadoresPublicos := make([]protocolo.JugadorPublico, 0, len(m.Jugadores))
+	for _, j := range m.Jugadores {
+		if j == nil {
+			continue
+		}
+		jugadoresPublicos = append(jugadoresPublicos, protocolo.JugadorPublico{
+			ID:            j.ID,
+			Nombre:        j.Nombre,
+			Saldo:         int64(j.Saldo),
+			ApuestaRonda:  int64(j.ApuestaRonda),
+			Activo:        !j.Retirado,
+			AllIn:         j.AllIn,
+			PosicionSilla: int(j.Silla),
+		})
+	}
+
+	var pozoTotal int64
+	if m.Pozo != nil {
+		pozoTotal = m.Pozo.Total()
+	}
+
+	return protocolo.EstadoPublico{
+		IDMano:            m.idManoActual,
+		Etapa:             m.etapaActual,
+		Comunitarias:      append([]protocolo.Carta(nil), m.comunitarias...),
+		Pozo:              pozoTotal,
+		ApuestaActual:     int64(m.apuestaActual),
+		SubidaMinima:      int64(m.subidaMinima),
+		CiegaChica:        int64(m.CfgPartida.CiegaMenor),
+		CiegaGrande:       int64(m.CfgPartida.CiegaMayor),
+		PosicionBoton:     int(m.Boton),
+		Jugadores:         jugadoresPublicos,
+		HistorialAcciones: append([]protocolo.AccionRegistrada(nil), m.historial...),
+	}
+}
+
+// Estado devuelve una foto de la mesa apta para enviar a un bot.
 func (m *Mesa) Estado() protocolo.EstadoPublico {
-	panic("no implementado: ver docs/interfaces.md, tarea Mesa #1")
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.estadoSinLock()
 }
 
 // ObtenerJugadoresActivos requiere que quien la llame ya tenga tomado Mu.

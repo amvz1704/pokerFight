@@ -93,8 +93,61 @@ La Mesa no importa el paquete `casino`. Recibe una funcion:
 ValidarToken func(token string) (idCuenta, nombre string, err error)
 ```
 
-Al terminar la partida, la Mesa devuelve un `mesa.Resumen` y quien la
-orquesta llama a `casino.RegistrarResultado`.
+`(*casino.motor).ValidarToken` ya tiene exactamente esa forma (metodo de
+`Casino`, la interfaz publica que devuelve `casino.Nuevo`), asi que se
+inyecta directo en `mesa.NuevoServidor` sin envoltorios — ver el ejemplo en
+§4.1.
+
+Al terminar la partida, la Mesa devuelve un `mesa.ResumenPartida` y quien la
+orquesta llama a `casino.RegistrarResultado`. `cmd/mesa` (flag
+`-casino-db`) es ese orquestador: es el unico lugar que importa `mesa` y
+`casino` a la vez, y convierte `mesa.ResumenJugador` a
+`casino.ResultadoJugador` (`IDJugador` pasa a `IDCuenta` porque, con
+`-casino-db`, `ValidarToken` ya devolvio el ID de cuenta como identificador
+del jugador). Sin `-casino-db`, la mesa corre en modo abierto (el token del
+saludo es directamente el ID del jugador) y no reporta a nadie.
+
+### 4.1 Interfaz Casino (`internal/casino`)
+
+```go
+type Casino interface {
+    Registrar(usuario string) (Cuenta, error)
+    Login(usuario string) (token string, err error)
+    ValidarToken(token string) (idCuenta, nombre string, err error)
+
+    RegistrarBot(idCuenta, nombre, version string) (Bot, error)
+    ListarBots(idCuenta string) ([]Bot, error)
+
+    RegistrarResultado(resultado ResultadoPartida) error
+    Estadisticas(idCuenta string) (Estadisticas, error)
+    Ranking() ([]Estadisticas, error)
+
+    Cuenta(idCuenta string) (Cuenta, error)
+}
+```
+
+- `Login` no pide contraseña: es el modelo mínimo que hoy pide el protocolo
+  (el bot manda un token en el saludo, nada más). Si el equipo necesita
+  autenticación real, es un cambio a este contrato, no un detalle de
+  implementación.
+- `ResultadoJugador`/`ResultadoPartida` son tipos propios de `casino`, no los
+  de `mesa` (regla dura #4 del mapa de dependencias): quien orquesta ambos
+  hace la conversión.
+- La fórmula de puntaje (`casino/puntaje.go`, `puntosPorResultado`) no tenía
+  especificación previa: hoy suma `puntosPorPuesto` (10) por cada rival
+  superado y resta `puntosPorTimeout` (2) por cada timeout de esa partida.
+  Es el único lugar a tocar si el equipo define otra fórmula.
+- **Pendiente conocido:** `mesa.ResumenJugador` todavía no cuenta los
+  timeouts por jugador (la conexión sí los cuenta, `ConexionTCP.Timeouts()`,
+  pero no llegan al resumen de la partida), así que hoy
+  `ResultadoJugador.Timeouts` siempre llega en 0 desde `cmd/mesa`. Falta
+  sumar ese campo a `ResumenJugador` y poblarlo en `mesa.Jugar` para que el
+  ranking penalice timeouts de verdad.
+- Persistencia: `internal/almacen.JSON` (un solo archivo JSON, escritura
+  atómica vía archivo temporal + rename). `casino.Nuevo(rutaArchivo)` carga
+  el archivo si existe y arranca vacío si no. Pensado para cambiarse por
+  SQLite sin que `casino` cambie cómo lo usa (`Cargar`/`Guardar` de un valor
+  cualquiera, `almacen` no conoce `Cuenta`/`Bot`/etc).
 
 ## 4.1 Conexiones (`internal/mesa/servidor.go`)
 
@@ -154,9 +207,9 @@ Divergencias con el contrato de `MesaInterface` que quedan por resolver:
 | Crupier #2 | `crupier/crupier.go` | Ya implementado reparto inicial y comunitarias | 2h | Enzo / Gandy |
 | Crupier #3 | `crupier/pozo.go` | Ya implementado (pozos laterales) | 3h | Gandy |
 | Crupier #4 | `crupier/evaluador.go` | Ya implementada evaluacion de 5 en 7 | 4h | Enzo |
-| Mesa #1 | `mesa/turnos.go`, `mesa/mesa.go` | turnos, ciegas, rondas | 5h | Lucas |
-| Mesa #2 | `mesa/saldo.go` | contabilidad de fichas | 4h | Lucas |
+| Mesa #1 | `mesa/turnos.go`, `mesa/mesa.go` | Ya implementado (turnos, ciegas, rondas, `Estado`) | 5h | Lucas |
+| Mesa #2 | `mesa/saldo.go` | Ya implementado (contabilidad de fichas, validación de acciones) | 4h | Lucas |
 | Mesa #3 | `mesa/servidor.go` | Ya implementado (servidor TCP, handshake, conexión de prueba) | 5h | Alvaro |
-| Casino #1 | `casino/cuentas.go`, `almacen/json.go` | cuentas y sesiones | 3h | Jhntn |
-| Casino #2 | `casino/bots.go` | bots y versionado | 3h | Jhntn |
-| Casino #3 | `casino/puntaje.go` | ranking | 2h | Jhntn |
+| Casino #1 | `casino/cuentas.go`, `almacen/json.go` | Ya implementado (cuentas, login, tokens, persistencia JSON) | 3h | Jhntn |
+| Casino #2 | `casino/bots.go` | Ya implementado (alta y versionado de bots por cuenta) | 3h | Jhntn |
+| Casino #3 | `casino/puntaje.go` | Ya implementado (fórmula de puntos y ranking) | 2h | Jhntn |
