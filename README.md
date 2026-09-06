@@ -248,15 +248,15 @@ las interfaces ya cerradas.
 
 ### Mesa
 
-- [ ] Administracion de saldo — 4h
-- [ ] Puntaje general — 3h
-- [ ] Conexiones — 5h
+- [x] Administracion de saldo — 4h (ciegas, apuestas, all-in, pozos laterales via Crupier)
+- [x] Puntaje general — 3h (turnos/ciegas en `turnos.go`, loop completo en `Jugar`)
+- [x] Conexiones — 5h (servidor TCP, handshake, conexion de prueba)
 
 ### Casino
 
-- [ ] Administracion de cuentas — 3h
-- [ ] Administracion de bots por cuenta (versionamiento) — 3h
-- [ ] Puntaje general de cuenta — 2h
+- [x] Administracion de cuentas — 3h (`casino/cuentas.go`: registro, login, tokens, `ValidarToken` inyectable en Mesa)
+- [x] Administracion de bots por cuenta (versionamiento) — 3h (`casino/bots.go`)
+- [x] Puntaje general de cuenta — 2h (`casino/puntaje.go`: ranking + `cmd/casino`)
 
 ### Bots
 
@@ -267,16 +267,27 @@ las interfaces ya cerradas.
 
 | # | Especificacion | Modulo | Estado |
 | --- | ---------------- | -------- | -------- |
-| 1 | Conectarse por internet | Mesa | ⏳ |
-| 2 | Registrarse y mantener sesion durante un juego | Casino | ⏳ |
-| 3 | Conectar su bot a la mesa | Mesa + Casino | ⏳ |
-| 4 | Registrar y guardar estadisticas de los bots | Casino | ⏳ |
+| 1 | Conectarse por internet | Mesa | ✅ |
+| 2 | Registrarse y mantener sesion durante un juego | Casino | ✅ |
+| 3 | Conectar su bot a la mesa | Mesa + Casino | ✅ |
+| 4 | Registrar y guardar estadisticas de los bots | Casino | ✅ |
 | 5 | Decidir la opcion segura ante omision (check/fold) | Protocolo | ✅ |
 | 6 | Repartir cartas a cada usuario | Crupier | ✅ |
-| 7 | Contabilidad de apuestas | Mesa | ⏳ |
+| 7 | Contabilidad de apuestas | Mesa | ✅ |
 | 8 | Repartir cartas comunes | Crupier | ✅ |
-| 9 | Turnos y apuestas individuales (SB / BB / D) | Mesa | ⏳ |
+| 9 | Turnos y apuestas individuales (SB / BB / D) | Mesa | ✅ |
 | 10 | Decidir el ganador de la partida | Crupier | ✅ |
+
+Pendiente conocido: `Estadisticas.Timeouts` en el Casino todavia no recibe el
+conteo real por jugador — `mesa.ResumenJugador` no lo expone todavia (ver el
+comentario en `cmd/mesa/main.go`, funcion `reportarResultado`).
+
+Leyenda: ✅ listo · 🚧 parcial (falta otro modulo) · ⏳ pendiente.
+
+La #3 esta parcial: la Mesa ya acepta la conexion, hace el handshake y sienta
+al jugador (`mesa.Servidor` + `Mesa.SentarJugador`), pero falta
+`casino.ValidarToken` (Casino #1) para validar tokens de verdad; hoy el
+servidor corre en modo abierto si no se le inyecta esa funcion.
 
 ## Reglas del equipo
 

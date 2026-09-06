@@ -35,5 +35,5 @@ limpiar: ## Borra binarios y reportes
 mesa: build ## Levanta una mesa local en :9000
 	$(BIN)/mesa -addr :9000 -jugadores 6
 
-torneo-local: build ## Mesa + 2 bots de ejemplo, para prueba de humo
-	./scripts/torneo-local.sh
+torneo-local: ## Mesa + 2 bots de ejemplo, para prueba de humo
+	bash scripts/torneo-local.sh
