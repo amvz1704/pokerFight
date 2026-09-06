@@ -14,8 +14,8 @@ type SubPozo struct {
 
 // Pozo administra las apuestas de una mano, incluyendo pozos laterales por all-in.
 type Pozo struct {
-	contribuciones map[string]int64  // total acumulado por jugador durante la mano
-	activos        map[string]bool   // jugadores que aun no han hecho fold
+	contribuciones map[string]int64 // total acumulado por jugador durante la mano
+	activos        map[string]bool  // jugadores que aun no han hecho fold
 }
 
 // NuevoPozo crea un pozo vacio para la lista de jugadores dada.

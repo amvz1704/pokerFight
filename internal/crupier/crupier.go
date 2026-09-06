@@ -2,8 +2,10 @@ package crupier
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/amvz1704/pokerFight/internal/protocolo"
+	"github.com/amvz1704/pokerFight/pkg/poker"
 )
 
 // Participante asocia un ID de jugador a la mano recibida.
@@ -14,11 +16,12 @@ type Participante struct {
 
 // Evaluacion contiene el puntaje de una mano, permitiendo comparar
 // quién gana la partida de forma sencilla (mayor puntaje gana).
-type Evaluacion struct {
-	Puntaje     int
-	Descripcion string
-	Mejores5    [5]protocolo.Carta
-}
+//
+// Es un alias de poker.Evaluacion, no un tipo aparte: el evaluador vive en
+// pkg/poker para que los bots del torneo puedan usar exactamente el mismo que
+// la mesa (internal/ no es importable desde fuera del módulo). El alias
+// mantiene `crupier.Evaluacion` como nombre válido dentro del proyecto.
+type Evaluacion = poker.Evaluacion
 
 // Crupier administra el mazo y la evaluación de manos.
 // No conoce la red, las cuentas ni administra el pozo de apuestas directamente.
@@ -33,20 +36,40 @@ type Crupier interface {
 // motor es la implementación concreta de Crupier.
 type motor struct {
 	mazo   Mazo
+	fuente Fuente
 	idMano string
 }
 
-// Nuevo crea una nueva instancia del crupier.
-func Nuevo() Crupier {
+// Nuevo crea un crupier con barajado criptográfico. Es el que se usa en una
+// partida real: nadie, ni siquiera quien levantó la mesa, puede predecir el
+// mazo.
+func Nuevo() Crupier { return NuevoCon(FuenteCriptografica()) }
+
+// NuevoConSemilla crea un crupier determinista: dos crupiers con la misma
+// semilla reparten exactamente las mismas cartas, mano por mano.
+//
+// Es lo que le permite a la arena jugar un emparejamiento en las dos
+// posiciones con los mismos repartos y quedarse solo con la diferencia de
+// habilidad (ver internal/arena). No usarlo donde los jugadores puedan
+// conocer la semilla.
+func NuevoConSemilla(semilla uint64) Crupier { return NuevoCon(FuenteSembrada(semilla)) }
+
+// NuevoCon crea un crupier con la fuente de aleatoriedad dada.
+func NuevoCon(fuente Fuente) Crupier {
+	if fuente == nil {
+		fuente = FuenteCriptografica()
+	}
 	return &motor{
-		mazo: NuevoMazo(),
+		mazo:   NuevoMazoCon(fuente),
+		fuente: fuente,
 	}
 }
 
-// NuevaMano prepara el mazo para una mano nueva.
+// NuevaMano prepara el mazo para una mano nueva. El mazo se rearma completo y
+// se baraja de cero: no quedan restos de la mano anterior.
 func (m *motor) NuevaMano(idMano string) error {
 	m.idMano = idMano
-	m.mazo = NuevoMazo()
+	m.mazo = NuevoMazoCon(m.fuente)
 	return m.mazo.Barajar()
 }
 
@@ -111,40 +134,29 @@ func (m *motor) RepartirComunitarias(etapa protocolo.Etapa) ([]protocolo.Carta, 
 	return cartas, nil
 }
 
-// Evaluar determina el valor de una mano de 5 cartas a partir de las 2 privadas y 5 comunitarias.
+// Evaluar determina el valor de la mejor jugada de 5 cartas a partir de las 2
+// privadas y las comunitarias que haya. Delega en pkg/poker: la lógica vive
+// ahí para que los bots puedan importarla.
 func (m *motor) Evaluar(privadas protocolo.Mano, comunitarias []protocolo.Carta) (Evaluacion, error) {
 	todas := make([]protocolo.Carta, 0, 2+len(comunitarias))
 	todas = append(todas, privadas[:]...)
 	todas = append(todas, comunitarias...)
 
-	combs := combinaciones5(todas)
-	if len(combs) == 0 {
-		return Evaluacion{}, fmt.Errorf("crupier: no hay suficientes cartas para evaluar")
+	ev, err := poker.MejorDe(todas)
+	if err != nil {
+		return Evaluacion{}, fmt.Errorf("crupier: no se pudo evaluar la mano: %w", err)
 	}
-
-	maxPuntaje := -1
-	var mejorDesc string
-	var mejores5 [5]protocolo.Carta
-
-	for _, comb := range combs {
-		var c5 [5]protocolo.Carta
-		copy(c5[:], comb)
-		puntaje, desc := evaluar5(c5)
-		if puntaje > maxPuntaje {
-			maxPuntaje = puntaje
-			mejorDesc = desc
-			mejores5 = c5
-		}
-	}
-
-	return Evaluacion{
-		Puntaje:     maxPuntaje,
-		Descripcion: mejorDesc,
-		Mejores5:    mejores5,
-	}, nil
+	return ev, nil
 }
 
-// DecidirGanadores compara las manos de los participantes y distribuye el pozo.
+// DecidirGanadores compara las manos de los participantes y distribuye el
+// pozo, incluidos los pozos laterales que arma Pozo.Descomponer.
+//
+// El orden de `participantes` es significativo y lo fija la Mesa: es el orden
+// de acción, empezando por el primer jugador a la izquierda del botón. De ahí
+// sale, sin que el Crupier tenga que saber dónde está el botón, la regla de
+// docs/reglas.md sobre el reparto de un pozo que no divide exacto: la ficha
+// sobrante va al primero de esa lista entre los ganadores.
 func (m *motor) DecidirGanadores(participantes []Participante, comunitarias []protocolo.Carta, pozo *Pozo) (protocolo.ResultadoMano, error) {
 	if pozo == nil {
 		return protocolo.ResultadoMano{}, fmt.Errorf("crupier: pozo es nulo")
@@ -214,11 +226,28 @@ func (m *motor) DecidirGanadores(participantes []Participante, comunitarias []pr
 		Descripcion:  make(map[string]string),
 	}
 
-	for id, monto := range repartosMap {
-		res.Repartos = append(res.Repartos, protocolo.Reparto{
-			IDJugador: id,
-			Monto:     monto,
-		})
+	// Se recorre `participantes` y no el map: iterar un map en Go da un orden
+	// distinto en cada corrida, y el resultado de la mano termina en el
+	// historial y en el mensaje mano_fin. Dos réplicas de la misma partida
+	// tienen que producir exactamente el mismo JSON.
+	for _, p := range participantes {
+		if monto, ok := repartosMap[p.ID]; ok {
+			res.Repartos = append(res.Repartos, protocolo.Reparto{IDJugador: p.ID, Monto: monto})
+			delete(repartosMap, p.ID)
+		}
+	}
+	// Red de seguridad: si quedó algún ganador que no estaba en participantes
+	// (no debería), se agrega ordenado por ID para no perder fichas ni
+	// determinismo.
+	if len(repartosMap) > 0 {
+		sobrantes := make([]string, 0, len(repartosMap))
+		for id := range repartosMap {
+			sobrantes = append(sobrantes, id)
+		}
+		sort.Strings(sobrantes)
+		for _, id := range sobrantes {
+			res.Repartos = append(res.Repartos, protocolo.Reparto{IDJugador: id, Monto: repartosMap[id]})
+		}
 	}
 
 	for _, p := range participantes {

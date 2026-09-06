@@ -25,9 +25,21 @@ func (m *mesaFalsa) SentarJugador(id, nombre string, c ConexionMesaJugador) erro
 	m.sentados = append(m.sentados, id)
 	return nil
 }
+func (m *mesaFalsa) SentarJugadorEnSilla(id, nombre string, silla int, c ConexionMesaJugador) error {
+	return m.SentarJugador(id, nombre, c)
+}
+func (m *mesaFalsa) ReconectarJugador(id string, c ConexionMesaJugador) error {
+	for _, sentado := range m.sentados {
+		if sentado == id {
+			return nil
+		}
+	}
+	return errors.New("mesaFalsa: no está sentado")
+}
 func (m *mesaFalsa) LevantarJugador(id string) error                   { return nil }
 func (m *mesaFalsa) Jugar(ctx context.Context) (ResumenPartida, error) { return ResumenPartida{}, nil }
 func (m *mesaFalsa) Estado() protocolo.EstadoPublico                   { return protocolo.EstadoPublico{} }
+func (m *mesaFalsa) Sentados() int                                     { return len(m.sentados) }
 
 func logSilencioso() *log.Logger { return log.New(io.Discard, "", 0) }
 
@@ -415,4 +427,108 @@ func esperarConexion(t *testing.T, s *Servidor, id string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("el jugador %s nunca fue registrado", id)
+}
+
+// TestServidorRespetaLaSillaAsignada cierra el circuito de la asignacion de
+// sillas del torneo: el servidor tiene que sentar a cada bot donde dice
+// ConfigServidor.SillaDe, sin importar quien conecte primero.
+func TestServidorRespetaLaSillaAsignada(t *testing.T) {
+	m := mesaDePrueba(t, 4, 1000)
+
+	s := NuevoServidor(ConfigServidor{
+		Direccion:          "127.0.0.1:0",
+		TimeoutHandshakeMs: 2000,
+		Log:                logSilencioso(),
+		SillaDe: func(id string) (int, bool) {
+			if id == "tarde" {
+				return 0, true
+			}
+			return 3, true
+		},
+	}, m, nil)
+	if err := s.Abrir(); err != nil {
+		t.Fatalf("Abrir: %v", err)
+	}
+	t.Cleanup(func() { s.Cerrar() })
+	go s.Servir(context.Background())
+
+	// "temprano" conecta primero pero tiene asignada la silla 3.
+	for _, token := range []string{"temprano", "tarde"} {
+		bot, err := ConectarTCP(s.Direccion(), 2000)
+		if err != nil {
+			t.Fatalf("ConectarTCP(%s): %v", token, err)
+		}
+		t.Cleanup(func() { bot.Cerrar() })
+
+		err = bot.EnviarMensajeBot(protocolo.MensajeBot{
+			Tipo:    protocolo.MsgSaludo,
+			Version: protocolo.VersionProtocolo,
+			Token:   token,
+		}, 2000)
+		if err != nil {
+			t.Fatalf("saludo de %s: %v", token, err)
+		}
+		if resp, err := bot.RecibirMensajeMesa(2000); err != nil || resp.Tipo != protocolo.MsgBienvenida {
+			t.Fatalf("bienvenida de %s = %v (%v)", token, resp.Tipo, err)
+		}
+		esperarConexion(t, s, token)
+	}
+
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if j := m.Jugadores[0]; j == nil || j.ID != "tarde" {
+		t.Errorf("la silla 0 quedo %+v, se esperaba tarde", j)
+	}
+	if j := m.Jugadores[3]; j == nil || j.ID != "temprano" {
+		t.Errorf("la silla 3 quedo %+v, se esperaba temprano", j)
+	}
+}
+
+// TestBienvenidaTraeLaIdentidad: sin esto, un bot no tiene forma de saber cual
+// de EstadoPublico.Jugadores es el mismo, porque con Casino la mesa lo conoce
+// por su ID de cuenta y no por el token que mando.
+func TestBienvenidaTraeLaIdentidad(t *testing.T) {
+	m := mesaDePrueba(t, 4, 1000)
+	validar := func(string) (string, string, error) { return "c-42", "BotAlpha", nil }
+
+	s := NuevoServidor(ConfigServidor{
+		Direccion:          "127.0.0.1:0",
+		TimeoutHandshakeMs: 2000,
+		Log:                logSilencioso(),
+		SillaDe:            func(string) (int, bool) { return 2, true },
+	}, m, validar)
+	if err := s.Abrir(); err != nil {
+		t.Fatalf("Abrir: %v", err)
+	}
+	t.Cleanup(func() { s.Cerrar() })
+	go s.Servir(context.Background())
+
+	bot, err := ConectarTCP(s.Direccion(), 2000)
+	if err != nil {
+		t.Fatalf("ConectarTCP: %v", err)
+	}
+	t.Cleanup(func() { bot.Cerrar() })
+
+	err = bot.EnviarMensajeBot(protocolo.MensajeBot{
+		Tipo:    protocolo.MsgSaludo,
+		Version: protocolo.VersionProtocolo,
+		Token:   "un-token-cualquiera",
+	}, 2000)
+	if err != nil {
+		t.Fatalf("saludo: %v", err)
+	}
+
+	bienvenida, err := bot.RecibirMensajeMesa(2000)
+	if err != nil {
+		t.Fatalf("RecibirMensajeMesa: %v", err)
+	}
+	if bienvenida.Tipo != protocolo.MsgBienvenida {
+		t.Fatalf("llego %q, se esperaba bienvenida", bienvenida.Tipo)
+	}
+	if bienvenida.IDJugador != "c-42" {
+		t.Errorf("id_jugador = %q, se esperaba el ID de cuenta c-42 (no el token)", bienvenida.IDJugador)
+	}
+	if bienvenida.Silla != 2 {
+		t.Errorf("silla = %d, se esperaba 2", bienvenida.Silla)
+	}
 }
