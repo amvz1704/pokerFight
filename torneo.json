@@ -1,0 +1,27 @@
+{
+  "nombre": "torneo-local",
+  "formato": "round-robin",
+  "puntuacion": "neto",
+  "manos_por_enfrentamiento": 200,
+  "ida_y_vuelta": true,
+  "reponer_stack": true,
+  "semilla": 20260906,
+  "paralelismo": 2,
+  "penalizacion_timeout": 0,
+  "guardar_historial": true,
+  "salida": "resultados",
+  "mesa": {
+    "ciega_chica": 10,
+    "ciega_grande": 20,
+    "stack": 4000,
+    "timeout_ms": 2000,
+    "espera_jugadores_ms": 15000
+  },
+  "participantes": [
+    { "id": "aleatorio",   "nombre": "Bot Aleatorio",         "comando": ["./bin/aleatorio"] },
+    { "id": "conservador", "nombre": "Bot Conservador",       "comando": ["./bin/conservador"] },
+    { "id": "base",        "nombre": "Bot Base",              "comando": ["./bin/base"] },
+    { "id": "python",      "nombre": "Ejemplo Python",        "comando": ["python", "bots/ejemplos/python/bot.py"] },
+    { "id": "javascript",  "nombre": "Ejemplo JavaScript",    "comando": ["node", "bots/ejemplos/javascript/bot.js"] }
+  ]
+}
