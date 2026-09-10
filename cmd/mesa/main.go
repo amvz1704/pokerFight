@@ -127,6 +127,9 @@ func main() {
 // Casino (que no importa el paquete mesa, ver docs/interfaces.md §1) y lo
 // registra. IDJugador es el ID de cuenta que devolvió ValidarToken, así que
 // coincide con lo que RegistrarResultado espera en IDCuenta.
+//
+// Los timeouts salen del resumen: la Mesa cuenta por jugador cada vez que tuvo
+// que aplicar la acción segura, sea por plazo vencido o por acción inválida.
 func reportarResultado(c casino.Casino, resumen mesa.ResumenPartida) error {
 	posiciones := make([]casino.ResultadoJugador, 0, len(resumen.Posiciones))
 	for _, p := range resumen.Posiciones {
@@ -134,11 +137,7 @@ func reportarResultado(c casino.Casino, resumen mesa.ResumenPartida) error {
 			IDCuenta:   p.IDJugador,
 			Posicion:   p.Posicion,
 			SaldoFinal: p.SaldoFinal,
-			// Timeouts queda en 0: mesa.ResumenJugador todavía no expone
-			// cuántas veces se le aplicó la acción segura por jugador. La
-			// conexión (mesa.ConexionTCP) ya lleva la cuenta internamente;
-			// falta sumarla al resumen de la partida para que el ranking
-			// pueda descontar puntos por timeout como pide el README.
+			Timeouts:   p.Timeouts,
 		})
 	}
 	return c.RegistrarResultado(casino.ResultadoPartida{
@@ -153,7 +152,7 @@ func esperarJugadores(ctx context.Context, m mesa.MesaInterface, min int) bool {
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if len(m.Estado().Jugadores) >= min {
+		if m.Sentados() >= min {
 			return true
 		}
 		select {

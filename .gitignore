@@ -1,2 +1,14 @@
+# Binarios compilados
 /bin
-internal/crupier/evaluador_test.go
+
+# Reportes de cobertura
+coverage.out
+coverage.html
+
+# Salida de torneos: se regenera corriendo la arena. La configuracion del
+# torneo (torneo.json) SI se versiona, porque es la definicion de la edicion.
+/resultados
+/resultados-*
+
+# Base de datos local del Casino
+casino.json

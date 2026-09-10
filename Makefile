@@ -2,17 +2,13 @@
 BIN := bin
 PKGS := ./...
 
-.PHONY: ayuda build test cobertura fmt vet lint limpiar mesa casino bots torneo-local
+.PHONY: ayuda build test cobertura fmt vet lint limpiar mesa torneo torneo-local
 
 ayuda: ## Muestra esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
 
 build: ## Compila todos los binarios en ./bin
-	go build -o $(BIN)/mesa ./cmd/mesa
-	go build -o $(BIN)/casino ./cmd/casino
-	go build -o $(BIN)/bot ./cmd/bot
-	go build -o $(BIN)/bot-aleatorio ./bots/aleatorio
-	go build -o $(BIN)/bot-conservador ./bots/conservador
+	go build -o $(BIN)/ ./cmd/... ./bots/...
 
 test: ## Corre los tests con race detector
 	go test -race $(PKGS)
@@ -29,11 +25,14 @@ vet: ## Analisis estatico del toolchain
 
 lint: fmt vet ## Atajo de fmt + vet
 
-limpiar: ## Borra binarios y reportes
-	rm -rf $(BIN) coverage.out coverage.html
+limpiar: ## Borra binarios, reportes y resultados de torneos
+	rm -rf $(BIN) coverage.out coverage.html resultados
 
-mesa: build ## Levanta una mesa local en :9000
+mesa: build ## Levanta una mesa suelta en :9000, para conectarle bots a mano
 	$(BIN)/mesa -addr :9000 -jugadores 6
 
-torneo-local: ## Mesa + 2 bots de ejemplo, para prueba de humo
-	bash scripts/torneo-local.sh
+torneo: build ## Corre el torneo definido en torneo.json
+	$(BIN)/arena correr -config torneo.json
+
+torneo-local: build ## Prueba de humo: round-robin con los bots de ejemplo (Go, Python y JS)
+	$(BIN)/arena correr -config torneo.json

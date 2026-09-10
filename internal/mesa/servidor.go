@@ -299,6 +299,15 @@ type ConfigServidor struct {
 	TimeoutHandshakeMs uint64 // Plazo para que el bot envíe su saludo. 0 = sin plazo.
 	MaxConexiones      int    // Máximo de conexiones aceptadas en simultáneo. 0 = sin límite.
 	Log                *log.Logger
+
+	// SillaDe, si no es nil, decide en qué silla se sienta cada jugador. Se
+	// consulta con el ID que devolvió ValidarToken; si responde ok=false, el
+	// jugador va a la primera silla libre, como siempre.
+	//
+	// Sin esto, la silla la reparte el orden de conexión, que entre bots
+	// lanzados en paralelo es una carrera. Es lo que usa la arena para fijar
+	// las posiciones de cada enfrentamiento.
+	SillaDe func(idJugador string) (silla int, ok bool)
 }
 
 // Servidor acepta conexiones TCP de bots, hace el handshake y sienta a los
@@ -492,18 +501,74 @@ func (s *Servidor) atender(conexion net.Conn) {
 	cx.IDJugador = id
 	cx.Nombre = nombre
 
-	if err := s.mesa.SentarJugador(id, nombre, cx); err != nil {
-		s.cfg.Log.Printf("mesa: no se pudo sentar a %s: %v", id, err)
-		s.rechazarConexion(cx, err.Error())
+	// Primero se intenta sentar. Si ese ID ya tiene silla, es una reconexión
+	// (el bot se cayó y volvió): se le cambia la conexión sin tocarle el saldo.
+	// Sin esto, un bot que pierde el socket queda fuera de la partida para
+	// siempre y sus turnos se resuelven con la acción segura hasta quedar en 0.
+	reconexion := false
+	if err := s.sentar(id, nombre, cx); err != nil {
+		if errReconexion := s.mesa.ReconectarJugador(id, cx); errReconexion != nil {
+			// No pudo entrar ni como jugador nuevo ni como reconexión: se le
+			// informa el motivo original (mesa llena, normalmente).
+			s.cfg.Log.Printf("mesa: no se pudo sentar a %s: %v", id, err)
+			s.rechazarConexion(cx, err.Error())
+			return
+		}
+		reconexion = true
+	}
+
+	// La bienvenida se manda recién ahora, con la silla ya asignada: es la
+	// única forma que tiene el bot de saber cuál de EstadoPublico.Jugadores es
+	// él mismo (el token no sirve de ID salvo en modo abierto).
+	if err := s.darBienvenida(cx, id, nombre); err != nil {
+		s.cfg.Log.Printf("mesa: no se pudo saludar a %s: %v", id, err)
+		cx.Cerrar()
 		return
 	}
 
 	s.registrar(id, cx)
+	if reconexion {
+		s.cfg.Log.Printf("mesa: jugador %s (%s) reconectado desde %s", id, nombre, cx.Direccion())
+		return
+	}
 	s.cfg.Log.Printf("mesa: jugador %s (%s) conectado desde %s", id, nombre, cx.Direccion())
 }
 
-// saludar ejecuta el handshake: espera el saludo, verifica versión y token, y
-// responde con la bienvenida.
+// sentar coloca al jugador en la silla que le corresponda: la asignada por
+// ConfigServidor.SillaDe si hay una, o la primera libre si no.
+func (s *Servidor) sentar(id, nombre string, cx *ConexionTCP) error {
+	if s.cfg.SillaDe != nil {
+		if silla, ok := s.cfg.SillaDe(id); ok {
+			return s.mesa.SentarJugadorEnSilla(id, nombre, silla, cx)
+		}
+	}
+	return s.mesa.SentarJugador(id, nombre, cx)
+}
+
+// darBienvenida cierra el handshake informando al bot su identidad y su silla.
+// La silla se busca en el estado público porque MesaInterface no expone el
+// arreglo de sillas: si no aparece (una implementación de prueba que devuelve
+// un estado vacío), se manda -1, que el bot debe leer como "desconocida".
+func (s *Servidor) darBienvenida(cx *ConexionTCP, id, nombre string) error {
+	silla := -1
+	for _, j := range s.mesa.Estado().Jugadores {
+		if j.ID == id {
+			silla = j.PosicionSilla
+			break
+		}
+	}
+	return cx.EnviarMensaje(protocolo.MensajeMesa{
+		Tipo:      protocolo.MsgBienvenida,
+		Version:   protocolo.VersionProtocolo,
+		IDJugador: id,
+		Silla:     silla,
+		Mensaje:   "bienvenido " + nombre,
+	}, s.cfg.TimeoutHandshakeMs)
+}
+
+// saludar ejecuta la primera mitad del handshake: espera el saludo del bot y
+// verifica versión y token. No responde: la bienvenida se manda después de
+// sentar al jugador (ver darBienvenida), porque recién ahí se conoce su silla.
 func (s *Servidor) saludar(cx *ConexionTCP) (idJugador string, nombre string, err error) {
 	m, err := cx.recibirMensajeBot(s.cfg.TimeoutHandshakeMs)
 	if err != nil {
@@ -528,14 +593,8 @@ func (s *Servidor) saludar(cx *ConexionTCP) (idJugador string, nombre string, er
 	if idJugador == "" {
 		return "", "", ErrTokenInvalido
 	}
-
-	bienvenida := protocolo.MensajeMesa{
-		Tipo:    protocolo.MsgBienvenida,
-		Version: protocolo.VersionProtocolo,
-		Mensaje: "bienvenido " + nombre,
-	}
-	if err := cx.EnviarMensaje(bienvenida, s.cfg.TimeoutHandshakeMs); err != nil {
-		return "", "", err
+	if nombre == "" {
+		nombre = idJugador
 	}
 	return idJugador, nombre, nil
 }

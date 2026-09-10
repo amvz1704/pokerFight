@@ -1,79 +1,58 @@
-# Prueba de humo (version PowerShell de torneo-local.sh): levanta una mesa
-# local y conecta 2 bots de ejemplo para jugar un torneo corto de punta a
-# punta. Pensado para Windows, donde `make torneo-local` puede fallar si
-# `bash` en el PATH resuelve al stub de WSL en vez del bash.exe de Git.
+# Prueba de humo (version PowerShell de torneo-local.sh): compila todo y corre
+# el torneo definido en torneo.json.
 #
-# Sin -CasinoDB corre en modo abierto (igual que torneo-local.sh): el token
-# que manda cada bot es directamente su identificador, sin pasar por Casino.
-# Con -CasinoDB, registra las 2 cuentas de prueba en ese archivo (si no
-# existen todavia), hace login para conseguir tokens reales, corre la mesa
-# con -casino-db, y al final imprime el ranking actualizado.
+# Pensado para Windows, donde `make torneo-local` puede fallar si `bash` en el
+# PATH resuelve al stub de WSL en vez del bash.exe de Git.
+#
+# Sin -CasinoDB corre en modo abierto: el token de cada participante es
+# directamente su identificador. Con -CasinoDB, registra las cuentas que falten
+# en ese archivo, corre el torneo validando contra el Casino y al final imprime
+# el ranking historico.
 #
 # Uso:
 #   .\scripts\torneo-local.ps1
-#   .\scripts\torneo-local.ps1 -Rondas 20 -Addr :9010
+#   .\scripts\torneo-local.ps1 -Config mi-torneo.json
 #   .\scripts\torneo-local.ps1 -CasinoDB casino.json
 
 param(
-    [string]$Addr = ":9000",
-    [int]$Rondas = 10,
+    [string]$Config = "torneo.json",
     [string]$CasinoDB = ""
 )
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
-New-Item -ItemType Directory -Force -Path bin | Out-Null
-
-Write-Host "Compilando mesa, casino y bots de ejemplo..."
-go build -o bin/mesa.exe ./cmd/mesa
-go build -o bin/casino.exe ./cmd/casino
-go build -o bin/bot-aleatorio.exe ./bots/aleatorio
-go build -o bin/bot-conservador.exe ./bots/conservador
+Write-Host "Compilando..."
+go build -o bin/ ./cmd/... ./bots/...
 if ($LASTEXITCODE -ne 0) {
     Write-Error "La compilacion fallo (codigo $LASTEXITCODE)."
     exit 1
 }
 
-$mesaAddr = if ($Addr.StartsWith(":")) { "localhost$Addr" } else { $Addr }
-$token1 = "bot-aleatorio-1"
-$token2 = "bot-conservador-1"
-$mesaArgs = @("-addr", $Addr, "-jugadores", "2", "-min-jugadores", "2", "-rondas", $Rondas)
+if (-not (Test-Path $Config)) {
+    Write-Host "No existe $Config, escribiendo uno de ejemplo..."
+    & .\bin\arena.exe init -config $Config
+}
+
+$argumentos = @("correr", "-config", $Config)
 
 if ($CasinoDB -ne "") {
-    Write-Host "Registrando cuentas de prueba en $CasinoDB (si no existen ya)..."
-    & .\bin\casino.exe -db $CasinoDB registrar -usuario bot-aleatorio-1 2>$null | Out-Null
-    & .\bin\casino.exe -db $CasinoDB registrar -usuario bot-conservador-1 2>$null | Out-Null
+    Write-Host "Registrando cuentas en $CasinoDB (las que ya existan dan error y se ignora)..."
 
-    $token1 = (& .\bin\casino.exe -db $CasinoDB login -usuario bot-aleatorio-1) | Select-Object -Last 1
-    $token2 = (& .\bin\casino.exe -db $CasinoDB login -usuario bot-conservador-1) | Select-Object -Last 1
-    if (-not $token1 -or -not $token2) {
-        Write-Error "No se pudo obtener un token de login desde $CasinoDB."
-        exit 1
+    # Los ids de participante salen del propio archivo de torneo.
+    $torneo = Get-Content $Config -Raw | ConvertFrom-Json
+    foreach ($p in $torneo.participantes) {
+        & .\bin\casino.exe -db $CasinoDB registrar -usuario $p.id 2>$null | Out-Null
     }
-    $mesaArgs += @("-casino-db", $CasinoDB)
-    Write-Host "Mesa usando el Casino de $CasinoDB"
+
+    Write-Host "AVISO: con -CasinoDB cada participante necesita su token en el archivo"
+    Write-Host "       de torneo. Conseguilos con:"
+    Write-Host "       .\bin\casino.exe -db $CasinoDB login -usuario <id>"
+    $argumentos += @("-casino-db", $CasinoDB)
 }
 
-Write-Host "Levantando la mesa en $Addr ($Rondas rondas)..."
-$mesaProc = Start-Process -FilePath ".\bin\mesa.exe" -ArgumentList $mesaArgs -NoNewWindow -PassThru
-Start-Sleep -Seconds 1
-
-Write-Host "Conectando bot-aleatorio y bot-conservador..."
-$bot1Proc = Start-Process -FilePath ".\bin\bot-aleatorio.exe" -ArgumentList @("-addr", $mesaAddr, "-token", $token1) -NoNewWindow -PassThru
-$bot2Proc = Start-Process -FilePath ".\bin\bot-conservador.exe" -ArgumentList @("-addr", $mesaAddr, "-token", $token2) -NoNewWindow -PassThru
-
-try {
-    $mesaProc.WaitForExit()
-}
-finally {
-    foreach ($p in @($bot1Proc, $bot2Proc)) {
-        if ($p -and -not $p.HasExited) {
-            Stop-Process -Id $p.Id -ErrorAction SilentlyContinue
-        }
-    }
-}
+& .\bin\arena.exe @argumentos
 
 if ($CasinoDB -ne "") {
-    Write-Host "`nRanking actualizado:"
+    Write-Host "`nRanking historico:"
     & .\bin\casino.exe -db $CasinoDB ranking
 }

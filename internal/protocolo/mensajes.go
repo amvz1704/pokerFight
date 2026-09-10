@@ -1,21 +1,39 @@
 package protocolo
 
-// VersionProtocolo se envia en el saludo. Si no coincide, la Mesa rechaza la
-// conexion. Subirla ante cualquier cambio incompatible.
-const VersionProtocolo = "0.0.1"
+// VersionProtocolo se envia en el saludo y en cada mensaje de la Mesa. Si el
+// saludo del bot no la trae exacta, la Mesa rechaza la conexion.
+//
+// Politica de versionado (semver sobre el contrato, no sobre el codigo):
+//   - PATCH: correcciones que no cambian ningun campo (docs, textos).
+//   - MINOR: campos nuevos opcionales. Un bot viejo los ignora y sigue
+//     jugando, pero igual debe declarar la version nueva en el saludo.
+//   - MAYOR: cualquier cambio que rompa a un bot existente.
+//
+// Ver docs/protocolo.md, que es la referencia normativa de este contrato.
+const VersionProtocolo = "1.0.0"
 
 // --- Vista publica del estado ---------------------------------------------
 
 // JugadorPublico es lo que un bot puede ver de sus rivales. Nunca incluye
 // cartas privadas: eso lo garantiza la Mesa al construir el mensaje.
 type JugadorPublico struct {
-	ID            string `json:"id"`
-	Nombre        string `json:"nombre"`
-	Saldo         int64  `json:"saldo"`          // Fichas restantes.
-	ApuestaRonda  int64  `json:"apuesta_ronda"`  // Apostado en la ronda actual.
-	Activo        bool   `json:"activo"`         // false si hizo fold.
-	AllIn         bool   `json:"allin"`          // true si ya no puede apostar.
-	PosicionSilla int    `json:"posicion_silla"` // 0..n-1, sentido horario.
+	ID           string `json:"id"`
+	Nombre       string `json:"nombre"`
+	Saldo        int64  `json:"saldo"`         // Fichas restantes.
+	ApuestaRonda int64  `json:"apuesta_ronda"` // Apostado en la ronda actual.
+
+	// Activo es "sigue en la mano en curso": false en cuanto hace fold.
+	// Vuelve a true al repartirse la mano siguiente.
+	Activo bool `json:"activo"`
+	// EnTorneo es "sigue en la partida": false cuando se quedo sin fichas y
+	// quedo eliminado. Un jugador con EnTorneo=false no vuelve a recibir
+	// cartas. Se distingue de Activo a proposito: un bot necesita las dos
+	// cosas (a quien le puedo ganar la mano vs. cuantos rivales quedan).
+	EnTorneo bool `json:"en_torneo"`
+
+	AllIn         bool `json:"allin"`          // true si ya no puede apostar mas en esta mano.
+	EnMano        bool `json:"en_mano"`        // true si recibio cartas en la mano en curso.
+	PosicionSilla int  `json:"posicion_silla"` // 0..MaxJugadores-1, sentido horario.
 }
 
 // EstadoPublico es la foto de la mesa que se envia a un bot en su turno.
@@ -66,6 +84,13 @@ type MensajeMesa struct {
 	TimeoutMs       int             `json:"timeout_ms,omitempty"`       // Plazo para responder.
 	Resultado       *ResultadoMano  `json:"resultado,omitempty"`        // Solo en MsgManoFin.
 	Mensaje         string          `json:"mensaje,omitempty"`          // Texto libre / error.
+
+	// Identidad del destinatario. Se envia en MsgBienvenida y es la unica
+	// forma que tiene un bot de saber cual de los EstadoPublico.Jugadores es
+	// el mismo: el token no sirve como identificador salvo en modo abierto,
+	// porque con Casino la Mesa usa el ID de cuenta que devolvio ValidarToken.
+	IDJugador string `json:"id_jugador,omitempty"` // Solo en MsgBienvenida.
+	Silla     int    `json:"silla,omitempty"`      // Solo en MsgBienvenida. 0..MaxJugadores-1.
 }
 
 // --- Mensajes Bot -> Mesa -------------------------------------------------

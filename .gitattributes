@@ -1,0 +1,10 @@
+# Normaliza los finales de linea. Sin esto, en Windows los archivos quedan con
+# CRLF en el working tree y `gofmt -l` los marca a todos como sin formatear,
+# que hace inservible el target `make lint`.
+* text=auto eol=lf
+*.go   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.sh   text eol=lf
+# Los scripts de PowerShell si van con CRLF: es lo que espera Windows.
+*.ps1  text eol=crlf

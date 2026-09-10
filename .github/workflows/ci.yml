@@ -1,0 +1,102 @@
+# CI de pokerFight: formato, analisis estatico, build y tests.
+#
+# Los tests corren con -race en Linux, que es donde siempre hay compilador de C
+# disponible: en Windows -race necesita cgo y no todos los del equipo lo tienen
+# instalado (ver CONTRIBUTING.md, seccion Tests).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formato
+        # gofmt -l lista los archivos sin formatear. Si lista algo, falla.
+        run: |
+          sin_formato=$(gofmt -l .)
+          if [ -n "$sin_formato" ]; then
+            echo "Estos archivos no estan formateados. Corre 'make fmt':"
+            echo "$sin_formato"
+            exit 1
+          fi
+
+      - name: Analisis estatico
+        run: go vet ./...
+
+      - name: Build
+        run: go build -o bin/ ./cmd/... ./bots/...
+
+      - name: Tests
+        run: go test -race ./...
+
+  # Prueba de humo: un torneo completo de punta a punta, con bots en tres
+  # lenguajes. Es lo que atrapa las roturas que los tests unitarios no ven,
+  # como que el handshake deje de funcionar o que un bot no arranque.
+  torneo-de-humo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build
+        run: go build -o bin/ ./cmd/... ./bots/...
+
+      - name: Torneo con bots en Go, Python y JavaScript
+        run: |
+          cat > torneo-ci.json <<'JSON'
+          {
+            "nombre": "ci",
+            "formato": "round-robin",
+            "puntuacion": "neto",
+            "manos_por_enfrentamiento": 30,
+            "ida_y_vuelta": true,
+            "reponer_stack": true,
+            "semilla": 1,
+            "paralelismo": 2,
+            "guardar_historial": true,
+            "salida": "resultados-ci",
+            "mesa": { "ciega_chica": 10, "ciega_grande": 20, "stack": 2000, "timeout_ms": 5000 },
+            "participantes": [
+              { "id": "go-base", "comando": ["./bin/base"] },
+              { "id": "py",      "comando": ["python3", "bots/ejemplos/python/bot.py"] },
+              { "id": "js",      "comando": ["node", "bots/ejemplos/javascript/bot.js"] }
+            ]
+          }
+          JSON
+          ./bin/arena correr -config torneo-ci.json
+
+      - name: Verificar que no hubo incidencias
+        # Un enfrentamiento que no se pudo jugar no hace fallar a la arena (es
+        # deliberado: un bot roto no debe abortar un torneo real), asi que en CI
+        # hay que revisarlo explicitamente.
+        run: |
+          incidencias=$(jq '.incidencias // [] | length' resultados-ci/clasificacion.json)
+          if [ "$incidencias" -ne 0 ]; then
+            echo "El torneo tuvo $incidencias enfrentamiento(s) sin jugar:"
+            jq '.incidencias' resultados-ci/clasificacion.json
+            exit 1
+          fi
+          cat resultados-ci/clasificacion.txt
