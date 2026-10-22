@@ -22,7 +22,6 @@ package main
 import (
 	"context"
 
-	"github.com/amvz1704/pokerFight/internal/protocolo"
 	"github.com/amvz1704/pokerFight/pkg/botsdk"
 	"github.com/amvz1704/pokerFight/pkg/poker"
 )
@@ -31,7 +30,7 @@ type botBase struct{}
 
 func (botBase) Nombre() string { return "base" }
 
-func (b botBase) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
+func (b botBase) Decidir(ctx context.Context, t botsdk.Turno) botsdk.Accion {
 	if len(t.Estado.Comunitarias) < 3 {
 		return b.preflop(t)
 	}
@@ -48,7 +47,7 @@ const (
 	chenParaPagar = 5.0 // Manos jugables: conectores del mismo palo, ases chicos.
 )
 
-func (botBase) preflop(t botsdk.Turno) protocolo.Accion {
+func (botBase) preflop(t botsdk.Turno) botsdk.Accion {
 	puntaje := puntuacionChen(t.Mano)
 
 	switch {
@@ -58,20 +57,20 @@ func (botBase) preflop(t botsdk.Turno) protocolo.Accion {
 		return t.Apostar(t.Estado.CiegaGrande * 3)
 
 	case puntaje >= chenParaPagar:
-		if t.Puede(protocolo.Check) {
+		if t.Puede(botsdk.Check) {
 			return t.Check()
 		}
 		// Se paga solo mientras siga barato: con una mano jugable pero no
 		// fuerte, meter un tercio del stack preflop es la forma más rápida de
 		// perderlo.
-		if t.Puede(protocolo.Call) && t.PorIgualar() <= t.Estado.CiegaGrande*3 {
+		if t.Puede(botsdk.Call) && t.PorIgualar() <= t.Estado.CiegaGrande*3 {
 			return t.Pagar()
 		}
 		return t.Fold()
 
 	default:
 		// Mano mala: solo se sigue si es gratis.
-		if t.Puede(protocolo.Check) {
+		if t.Puede(botsdk.Check) {
 			return t.Check()
 		}
 		return t.Fold()
@@ -88,7 +87,7 @@ func (botBase) preflop(t botsdk.Turno) protocolo.Accion {
 //     3 huecos -4, 4 o más -5.
 //  5. +1 si las dos cartas son menores que Q y el hueco es 0 o 1 (una
 //     conectora chica puede armar escalera por los dos lados).
-func puntuacionChen(mano protocolo.Mano) float64 {
+func puntuacionChen(mano botsdk.Mano) float64 {
 	alta, baja := mano[0].Rango, mano[1].Rango
 	if baja > alta {
 		alta, baja = baja, alta
@@ -121,7 +120,7 @@ func puntuacionChen(mano protocolo.Mano) float64 {
 		puntaje -= 5
 	}
 
-	if hueco <= 1 && alta < protocolo.Reina && alta != baja {
+	if hueco <= 1 && alta < botsdk.Reina && alta != baja {
 		puntaje += 1
 	}
 
@@ -129,15 +128,15 @@ func puntuacionChen(mano protocolo.Mano) float64 {
 }
 
 // valorChen es el valor de la carta más alta en la fórmula de Chen.
-func valorChen(r protocolo.Rango) float64 {
+func valorChen(r botsdk.Rango) float64 {
 	switch r {
-	case protocolo.As:
+	case botsdk.As:
 		return 10
-	case protocolo.Rey:
+	case botsdk.Rey:
 		return 8
-	case protocolo.Reina:
+	case botsdk.Reina:
 		return 7
-	case protocolo.Jota:
+	case botsdk.Jota:
 		return 6
 	default:
 		return float64(r) / 2
@@ -146,7 +145,7 @@ func valorChen(r protocolo.Rango) float64 {
 
 // --- Postflop --------------------------------------------------------------
 
-func (botBase) postflop(t botsdk.Turno) protocolo.Accion {
+func (botBase) postflop(t botsdk.Turno) botsdk.Accion {
 	// El mismo evaluador que usa el crupier para decidir el showdown: lo que
 	// este bot cree que tiene es exactamente lo que la mesa va a puntuar.
 	jugada := poker.Mejor(t.Mano, t.Estado.Comunitarias)
@@ -154,10 +153,10 @@ func (botBase) postflop(t botsdk.Turno) protocolo.Accion {
 	switch {
 	case jugada.Categoria >= poker.Trio:
 		// Mano grande: se apuesta fuerte y se paga cualquier subida.
-		if t.Puede(protocolo.Bet) || t.Puede(protocolo.Raise) {
+		if t.Puede(botsdk.Bet) || t.Puede(botsdk.Raise) {
 			return t.ApostarPozo(0.75)
 		}
-		if t.Puede(protocolo.Call) {
+		if t.Puede(botsdk.Call) {
 			return t.Pagar()
 		}
 		return t.Check()
@@ -165,20 +164,20 @@ func (botBase) postflop(t botsdk.Turno) protocolo.Accion {
 	case jugada.Categoria >= poker.Par:
 		// Mano mediana: se apuesta chico para cobrarle a manos peores, pero no
 		// se paga una apuesta grande.
-		if t.Puede(protocolo.Check) && t.Puede(protocolo.Bet) {
+		if t.Puede(botsdk.Check) && t.Puede(botsdk.Bet) {
 			return t.ApostarPozo(0.4)
 		}
-		if t.Puede(protocolo.Call) && t.PorIgualar()*2 <= t.Estado.Pozo {
+		if t.Puede(botsdk.Call) && t.PorIgualar()*2 <= t.Estado.Pozo {
 			return t.Pagar()
 		}
-		if t.Puede(protocolo.Check) {
+		if t.Puede(botsdk.Check) {
 			return t.Check()
 		}
 		return t.Fold()
 
 	default:
 		// Carta alta: no hay nada que defender.
-		if t.Puede(protocolo.Check) {
+		if t.Puede(botsdk.Check) {
 			return t.Check()
 		}
 		return t.Fold()

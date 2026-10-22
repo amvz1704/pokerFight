@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 
-	"github.com/amvz1704/pokerFight/internal/protocolo"
 	"github.com/amvz1704/pokerFight/pkg/botsdk"
 )
 
@@ -19,11 +18,11 @@ type botConservador struct{}
 
 func (botConservador) Nombre() string { return "conservador" }
 
-func (botConservador) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
-	if t.Puede(protocolo.Check) {
+func (botConservador) Decidir(ctx context.Context, t botsdk.Turno) botsdk.Accion {
+	if t.Puede(botsdk.Check) {
 		return t.Check()
 	}
-	if t.Puede(protocolo.Call) && t.PorIgualar() <= t.Estado.CiegaGrande*vecesCiegaTolerada {
+	if t.Puede(botsdk.Call) && t.PorIgualar() <= t.Estado.CiegaGrande*vecesCiegaTolerada {
 		return t.Pagar()
 	}
 	return t.Fold()

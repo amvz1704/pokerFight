@@ -76,7 +76,6 @@ package main
 import (
 	"context"
 
-	"github.com/amvz1704/pokerFight/internal/protocolo"
 	"github.com/amvz1704/pokerFight/pkg/botsdk"
 	"github.com/amvz1704/pokerFight/pkg/poker"
 )
@@ -85,7 +84,7 @@ type MiBot struct{}
 
 func (MiBot) Nombre() string { return "mi-bot" }
 
-func (MiBot) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
+func (MiBot) Decidir(ctx context.Context, t botsdk.Turno) botsdk.Accion {
 	// poker.Mejor es el mismo evaluador que usa el crupier para decidir el
 	// showdown: lo que acá te dice que tenés es exactamente lo que la mesa va
 	// a puntuar.
@@ -94,7 +93,7 @@ func (MiBot) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
 	if jugada.Categoria >= poker.Trio {
 		return t.ApostarPozo(0.75) // Apuesta 3/4 del pozo.
 	}
-	if t.Puede(protocolo.Check) {
+	if t.Puede(botsdk.Check) {
 		return t.Check()
 	}
 	if t.PorIgualar() <= t.Estado.CiegaGrande {
@@ -108,6 +107,11 @@ func main() { botsdk.CorrerDesdeFlags(MiBot{}) }
 
 `CorrerDesdeFlags` define `-addr` y `-token`, así que tu bot ya cumple el
 contrato de la arena.
+
+Todos los tipos del protocolo que tu bot necesita nombrar (`botsdk.Accion`,
+`botsdk.EstadoPublico`, `botsdk.Mano`, `botsdk.Raise`, `botsdk.As`, ...) salen
+de `pkg/botsdk`. No importes `internal/protocolo`: Go no deja importar paquetes
+`internal/` desde otro módulo, y tu bot no compilaría fuera de este repo.
 
 ### La API de `Turno`
 
@@ -125,7 +129,7 @@ Consultas:
 
 | | |
 | --- | --- |
-| `t.Puede(protocolo.Raise)` | ¿Está permitida esa acción? |
+| `t.Puede(botsdk.Raise)` | ¿Está permitida esa acción? |
 | `t.PorIgualar()` | Fichas que faltan para igualar. 0 si podés pasar gratis. |
 | `t.Techo()` | Total máximo al que podés llevar tu apuesta: el all-in. |
 | `t.SubidaMinima()` | Total mínimo que la mesa acepta como subida. |
@@ -172,14 +176,14 @@ Implementá estas interfaces opcionales y el SDK te llama solo:
 
 ```go
 // Principio y fin de cada mano.
-func (b *MiBot) ManoInicio(estado protocolo.EstadoPublico, mias protocolo.Mano) {}
-func (b *MiBot) ManoFin(resultado protocolo.ResultadoMano) {
+func (b *MiBot) ManoInicio(estado botsdk.EstadoPublico, mias botsdk.Mano) {}
+func (b *MiBot) ManoFin(resultado botsdk.ResultadoMano) {
 	// resultado.Mostradas trae las cartas del rival, si hubo showdown.
 	// Es el mejor lugar para aprender a leerlo.
 }
 
 // Cada actualización de estado, incluidos los turnos ajenos.
-func (b *MiBot) EstadoActualizado(estado protocolo.EstadoPublico) {}
+func (b *MiBot) EstadoActualizado(estado botsdk.EstadoPublico) {}
 ```
 
 ### El evaluador

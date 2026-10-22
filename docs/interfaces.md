@@ -31,7 +31,12 @@ Reglas duras:
    que la Mesa, recibe `ValidarToken` por inyeccion.
 6. `pkg/` es lo unico publico: es lo que pueden importar los bots de los
    participantes, que viven fuera del modulo y por lo tanto no pueden ver
-   `internal/`.
+   `internal/`. Por eso `pkg/botsdk/tipos.go` re-exporta como **alias** los
+   tipos de `protocolo` que un bot necesita nombrar (`botsdk.Accion`,
+   `botsdk.EstadoPublico`, ...): sin ellos, un bot externo no podria ni
+   escribir la firma de `Decidir`. Lo verifica
+   `TestUnBotDeOtroModuloCompila`, que compila los ejemplos de la
+   documentacion y los bots de `bots/` desde un modulo aparte.
 
 ### 1.1 Por que el evaluador esta en `pkg/poker`
 
