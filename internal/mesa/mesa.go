@@ -699,6 +699,18 @@ func (m *Mesa) netoSinLock(j *Jugador) int64 {
 	return int64(j.Saldo) - int64(m.CfgPartida.StackInicial)
 }
 
+// contarPuedenActuar cuenta cuántos jugadores en mano todavía pueden tomar
+// decisiones (no se retiraron ni están all-in). Requiere Mu tomado.
+func (m *Mesa) contarPuedenActuar() int {
+	n := 0
+	for _, j := range m.Jugadores {
+		if j != nil && j.EnMano && !j.Retirado && !j.AllIn {
+			n++
+		}
+	}
+	return n
+}
+
 // contarEnMano cuenta cuántos jugadores siguen en la mano actual (recibieron
 // cartas y no hicieron fold). Requiere Mu tomado.
 func (m *Mesa) contarEnMano() int {
@@ -716,6 +728,13 @@ func (m *Mesa) contarEnMano() int {
 // todos los jugadores en mano y no all-in igualaron la apuesta actual (o se
 // retiraron), o hasta que quede uno solo en mano.
 func (m *Mesa) rondaApuestas(ctx context.Context, etapa protocolo.Etapa, primerEnHablar uint8) error {
+	// vista guarda, por silla, la apuesta actual que tenía delante cada jugador
+	// la última vez que actuó en esta ronda. Es lo que decide si puede volver a
+	// subir: solo si desde entonces la apuesta creció al menos una subida
+	// completa (docs/reglas.md, all-in corto). Las ciegas no cuentan como haber
+	// actuado, por eso la ciega grande conserva su opción.
+	vista := make(map[uint8]uint64)
+
 	m.Mu.Lock()
 	pendientes := make(map[uint8]bool)
 	for silla, j := range m.Jugadores {
@@ -740,6 +759,12 @@ func (m *Mesa) rondaApuestas(ctx context.Context, etapa protocolo.Etapa, primerE
 		}
 		j := m.Jugadores[silla]
 		debeActuar := pendientes[silla] && j != nil && j.EnMano && !j.Retirado && !j.AllIn
+		// Si todos los demás están all-in y no hay nada que pagar, no queda
+		// decisión que tomar: preguntarle solo le daría la opción de apostar
+		// contra nadie (el excedente le volvería entero).
+		if debeActuar && j.ApuestaRonda >= m.apuestaActual && m.contarPuedenActuar() <= 1 {
+			debeActuar = false
+		}
 		m.Mu.Unlock()
 
 		if !debeActuar {
@@ -753,7 +778,7 @@ func (m *Mesa) rondaApuestas(ctx context.Context, etapa protocolo.Etapa, primerE
 		}
 
 		delete(pendientes, silla)
-		m.turnoJugador(j, etapa, pendientes)
+		m.turnoJugador(j, etapa, pendientes, vista)
 
 		siguiente, ok := m.siguienteSillaEnManoConLock(silla)
 		if !ok {
@@ -772,16 +797,22 @@ func (m *Mesa) siguienteSillaEnManoConLock(desde uint8) (uint8, bool) {
 	return m.siguienteSillaEnMano(desde)
 }
 
-// turnoJugador le pide una acción a j, la valida y la aplica. Si reabre la
-// ronda (subida completa), agrega de vuelta a pendientes a los demás
-// jugadores en mano que no están all-in.
-func (m *Mesa) turnoJugador(j *Jugador, etapa protocolo.Etapa, pendientes map[uint8]bool) {
+// turnoJugador le pide una acción a j, la valida y la aplica. Si la acción
+// sube la apuesta, agrega de vuelta a pendientes a los demás jugadores en mano
+// que no están all-in y quedaron debajo: tienen que pagar o retirarse, sea la
+// subida completa o un all-in corto. Si además pueden volver a subir lo decide
+// `vista` (ver rondaApuestas).
+func (m *Mesa) turnoJugador(j *Jugador, etapa protocolo.Etapa, pendientes map[uint8]bool, vista map[uint8]uint64) {
 	m.Mu.Lock()
+	silla := uint8(j.Silla)
+	puedeSubir := true
+	if apuestaVista, actuo := vista[silla]; actuo {
+		puedeSubir = m.apuestaActual-apuestaVista >= m.subidaMinima
+	}
 	pendiente := int64(m.apuestaActual) - int64(j.ApuestaRonda)
-	validas := accionesValidas(j, m.apuestaActual)
+	validas := accionesValidas(j, m.apuestaActual, puedeSubir)
 	estado := m.estadoSinLock()
 	apuestaActual, subidaMinima, timeout := m.apuestaActual, m.subidaMinima, m.CfgMesa.Timeout
-	silla := uint8(j.Silla)
 	m.Mu.Unlock()
 
 	solicitud := protocolo.MensajeMesa{
@@ -800,7 +831,7 @@ func (m *Mesa) turnoJugador(j *Jugador, etapa protocolo.Etapa, pendientes map[ui
 	aplicoSegura := true
 	if err := j.Conexion.EnviarMensaje(solicitud, timeout); err == nil {
 		if recibida, err := j.Conexion.SolicitarAccion(timeout); err == nil {
-			if esAccionValida(j, recibida, apuestaActual, subidaMinima) {
+			if esAccionValida(j, recibida, apuestaActual, subidaMinima, puedeSubir) {
 				accion = recibida
 				aplicoSegura = false
 			}
@@ -816,14 +847,15 @@ func (m *Mesa) turnoJugador(j *Jugador, etapa protocolo.Etapa, pendientes map[ui
 		j.Timeouts++
 	}
 	apuestaAntes := m.apuestaActual
-	reabre := m.procesarAccion(j, accion)
+	m.procesarAccion(j, accion)
+	vista[silla] = m.apuestaActual
 	m.historial = append(m.historial, protocolo.AccionRegistrada{IDJugador: j.ID, Etapa: etapa, Accion: accion})
-	if reabre && m.apuestaActual > apuestaAntes {
+	if m.apuestaActual > apuestaAntes {
 		for s, jj := range m.Jugadores {
 			if uint8(s) == silla {
 				continue
 			}
-			if jj != nil && jj.EnMano && !jj.Retirado && !jj.AllIn {
+			if jj != nil && jj.EnMano && !jj.Retirado && !jj.AllIn && jj.ApuestaRonda < m.apuestaActual {
 				pendientes[uint8(s)] = true
 			}
 		}

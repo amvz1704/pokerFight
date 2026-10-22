@@ -317,6 +317,12 @@ que se conectó a mitad de mano tiene `en_torneo:true` pero `en_mano:false`.
 `acciones_validas` te dice cuáles son legales **ahora**. Cualquier otra se
 descarta.
 
+Ojo con el all-in corto de un rival (por menos de una subida completa): si ya
+habías actuado en la ronda, la Mesa te vuelve a preguntar, pero solo para que
+pagues o te retires. En ese turno `acciones_validas` no trae `raise` ni `bet`, y
+`allin` solo aparece si no te alcanza para pagar. Ver
+[`reglas.md`](reglas.md#reglas-de-apuesta).
+
 ### `monto` es el TOTAL, no el incremento
 
 Este es el punto donde más bots se rompen.

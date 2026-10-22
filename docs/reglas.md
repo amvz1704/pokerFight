@@ -74,8 +74,13 @@ bot puede usar exactamente el mismo que la mesa.
   ```
 
 - **All-in por menos de una subida completa** es valido pero **no reabre** la
-  accion para quienes ya actuaron: pueden pagar la diferencia o retirarse, pero
-  no volver a subir.
+  accion para quienes ya actuaron: la Mesa les vuelve a pedir accion para que
+  paguen la diferencia o se retiren, pero no pueden volver a subir (no les
+  llega `raise` ni `bet` en `acciones_validas`, y `allin` solo si no les alcanza
+  para pagar). Si varios all-in cortos **suman** una subida completa desde la
+  ultima vez que actuaste, la accion se reabre y podes volver a subir.
+- Si todos tus rivales en la mano estan all-in y no tenes nada que pagar, la
+  Mesa no te pide accion: no queda ninguna decision que tomar.
 - Si la subida minima no entra en tu stack, la unica subida legal es el all-in.
   Hay que declararlo como `allin`, no como un `raise` corto.
 
