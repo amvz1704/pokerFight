@@ -405,7 +405,11 @@ dudosa "a ver si pasa".
 
 Si tu bot pierde el socket a mitad de partida, puede volver a conectarse con el
 **mismo token**: la Mesa lo reconoce y le devuelve su silla y su saldo. La
-conexión vieja se cierra.
+conexión vieja se cierra. Funciona aunque la mesa esté llena: el límite de
+conexiones cuenta jugadores, y vos ya sos uno.
+
+En la arena, el token que te llega por `-token` es nuevo en cada
+enfrentamiento: reconectá con ese, no con uno guardado de antes.
 
 Mientras estuviste desconectado, tus turnos se resolvieron con la acción segura
 y cada uno sumó un timeout. Reconectar no los borra.

@@ -35,6 +35,8 @@ package arena
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -56,8 +58,10 @@ type Participante struct {
 	// Nombre es el nombre a mostrar. Si está vacío se usa el ID.
 	Nombre string `json:"nombre,omitempty"`
 	// Token es lo que el bot manda en el saludo. Con un Casino detrás, es el
-	// token de 'casino login'. En modo abierto vale cualquier cosa y se usa
-	// como identificador; si está vacío, la arena usa el ID.
+	// token de 'casino login'. En modo abierto, a los bots que lanza la arena
+	// se les pasa en cambio un token secreto nuevo en cada enfrentamiento (ver
+	// tokensDeSesion), y este campo solo lo usan los bots remotos; si está
+	// vacío, el token de un bot remoto es su ID.
 	Token string `json:"token,omitempty"`
 	// Comando es el programa a ejecutar para levantar el bot, ya partido en
 	// argumentos: ["python", "bot.py"], ["./bin/mi-bot"], etc. La arena le
@@ -341,6 +345,10 @@ func (t *Torneo) jugarEnfrentamiento(ctx context.Context, e Enfrentamiento) Resu
 	if err != nil {
 		return terminar("%v", err)
 	}
+	validar := t.Validar
+	if validar == nil {
+		participantes, validar = tokensDeSesion(participantes)
+	}
 
 	// Un crupier sembrado: dos enfrentamientos con la misma Semilla reparten
 	// exactamente las mismas cartas. Es lo que hace comparables la ida y la
@@ -390,7 +398,15 @@ func (t *Torneo) jugarEnfrentamiento(ctx context.Context, e Enfrentamiento) Resu
 			silla, ok := sillas[idJugador]
 			return silla, ok
 		},
-	}, m, t.Validar)
+	}, m, validar)
+
+	// El orden de los defers importa: corren al revés de como se registran.
+	// Detener los bots tiene que ser lo ÚLTIMO, después de cerrar el servidor:
+	// cerrar el servidor es lo que les cierra el socket, y un bot termina
+	// cuando la mesa le cierra la conexión. Al revés, Detener esperaría todo su
+	// plazo a un bot que sigue conectado y lo terminaría matando.
+	sesiones := make([]Sesion, 0, len(participantes))
+	defer detenerTodas(&sesiones)
 
 	if err := servidor.Abrir(); err != nil {
 		return terminar("no se pudo abrir el puerto de la mesa: %v", err)
@@ -409,12 +425,6 @@ func (t *Torneo) jugarEnfrentamiento(ctx context.Context, e Enfrentamiento) Resu
 	// Se lanzan los bots ya con la dirección real de la mesa. Los que fallen al
 	// arrancar se reportan como error del enfrentamiento: jugar 1v0 no tiene
 	// sentido, y darle la victoria por defecto al rival sin avisar sería peor.
-	sesiones := make([]Sesion, 0, len(participantes))
-	defer func() {
-		for _, s := range sesiones {
-			s.Detener()
-		}
-	}()
 	for _, p := range participantes {
 		s, err := t.Lanzador.Lanzar(ctxPartida, p, servidor.Direccion())
 		if err != nil {
@@ -428,12 +438,71 @@ func (t *Torneo) jugarEnfrentamiento(ctx context.Context, e Enfrentamiento) Resu
 	}
 
 	resumen, err := m.Jugar(ctxPartida)
+	// Se cierra ya, sin esperar al defer: así los bots se enteran de que la
+	// partida terminó y Detener los encuentra saliendo solos.
+	servidor.Cerrar()
 	resultado.Duracion = time.Since(inicio)
 	resultado.Puestos = puestosDesde(resumen, participantes)
 	if err != nil {
 		resultado.Error = err.Error()
 	}
 	return resultado
+}
+
+// detenerTodas detiene las sesiones en paralelo: cada Detener puede esperar
+// su plazo de cierre, y en serie los plazos se sumarían.
+func detenerTodas(sesiones *[]Sesion) {
+	var espera sync.WaitGroup
+	for _, s := range *sesiones {
+		espera.Add(1)
+		go func(s Sesion) {
+			defer espera.Done()
+			s.Detener()
+		}(s)
+	}
+	espera.Wait()
+}
+
+// tokensDeSesion le da a cada bot que lanza la arena un token secreto, nuevo
+// en cada enfrentamiento, y devuelve la validación que los reconoce.
+//
+// Hace falta en modo abierto (sin Casino), donde el token sería el ID del
+// participante. Los IDs no son secretos: están en el archivo del torneo y en
+// el estado público de la mesa. Como la Mesa acepta reconexiones por token, un
+// bot que se presentara con el ID del rival le quitaría el asiento y jugaría
+// las dos sillas. Con un token que solo conoce el proceso lanzado, eso deja de
+// ser posible.
+//
+// Los bots remotos no se lanzan, así que no hay por dónde pasarles un token
+// nuevo: siguen usando el suyo (Participante.Token, o el ID). Un torneo abierto
+// con bots remotos necesita Casino (ver docs/arena.md, "Seguridad").
+func tokensDeSesion(participantes []Participante) ([]Participante, ValidarToken) {
+	porToken := make(map[string]Participante, len(participantes))
+	conToken := make([]Participante, len(participantes))
+	for i, p := range participantes {
+		if !p.EsRemoto() {
+			p.Token = tokenAleatorio()
+		}
+		conToken[i] = p
+		porToken[p.TokenEfectivo()] = p
+	}
+	return conToken, func(token string) (string, string, error) {
+		p, ok := porToken[token]
+		if !ok {
+			return "", "", fmt.Errorf("arena: token desconocido para este enfrentamiento")
+		}
+		return p.ID, p.NombreVisible(), nil
+	}
+}
+
+func tokenAleatorio() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Igual que en el Casino: sin aleatoriedad del sistema no hay forma
+		// segura de seguir.
+		panic("arena: no se pudo generar un token de sesión: " + err.Error())
+	}
+	return "sesion-" + hex.EncodeToString(b[:])
 }
 
 // rondasDe traduce el límite de manos de un enfrentamiento al formato que

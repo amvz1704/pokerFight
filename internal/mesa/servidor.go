@@ -297,8 +297,13 @@ type ValidarToken func(token string) (idJugador string, nombre string, err error
 type ConfigServidor struct {
 	Direccion          string // Dirección de escucha, por ejemplo ":9000". ":0" pide un puerto libre.
 	TimeoutHandshakeMs uint64 // Plazo para que el bot envíe su saludo. 0 = sin plazo.
-	MaxConexiones      int    // Máximo de conexiones aceptadas en simultáneo. 0 = sin límite.
-	Log                *log.Logger
+	// MaxConexiones es cuántos jugadores distintos pueden tener conexión
+	// registrada. 0 = sin límite. Un jugador que ya está registrado y vuelve a
+	// conectarse (reconexión) no cuenta como uno nuevo: si contara, un bot que
+	// pierde el socket en una mesa llena no podría volver nunca. También acota
+	// cuántos handshakes pueden estar en curso a la vez.
+	MaxConexiones int
+	Log           *log.Logger
 
 	// SillaDe, si no es nil, decide en qué silla se sienta cada jugador. Se
 	// consulta con el ID que devolvió ValidarToken; si responde ok=false, el
@@ -320,6 +325,7 @@ type Servidor struct {
 	mu         sync.Mutex
 	escucha    net.Listener
 	conexiones map[string]*ConexionTCP
+	enCurso    int // Conexiones aceptadas que todavía no terminaron el handshake.
 	cerrado    bool
 	espera     sync.WaitGroup
 }
@@ -406,14 +412,19 @@ func (s *Servidor) Servir(ctx context.Context) error {
 			return err
 		}
 
-		if s.lleno() {
-			s.rechazar(conexion, "mesa llena")
+		// Antes del handshake no se sabe quién es, así que no se puede decidir
+		// todavía si entra (una reconexión entra aunque la mesa esté llena).
+		// Lo único que se limita acá es cuántos pueden estar saludando a la vez,
+		// para que conexiones que no saludan no acumulen goroutines sin techo.
+		if !s.reservarHandshake() {
+			s.rechazar(conexion, "demasiadas conexiones esperando el saludo")
 			continue
 		}
 
 		s.espera.Add(1)
 		go func() {
 			defer s.espera.Done()
+			defer s.liberarHandshake()
 			s.atender(conexion)
 		}()
 	}
@@ -468,13 +479,41 @@ func (s *Servidor) Conexiones() map[string]*ConexionTCP {
 	return copia
 }
 
-func (s *Servidor) lleno() bool {
-	if s.cfg.MaxConexiones <= 0 {
+// reservarHandshake anota una conexión más en curso de handshake, si hay
+// lugar. Ver Servir.
+func (s *Servidor) reservarHandshake() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.MaxConexiones > 0 && s.enCurso >= s.cfg.MaxConexiones {
 		return false
+	}
+	s.enCurso++
+	return true
+}
+
+func (s *Servidor) liberarHandshake() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enCurso--
+}
+
+// admite decide, ya con la identidad validada, si el jugador puede entrar: un
+// jugador ya registrado siempre (es una reconexión), uno nuevo solo si queda
+// lugar.
+//
+// Dos jugadores nuevos que saludan a la vez pueden pasar los dos este control
+// con un solo lugar libre. No es un problema: la silla la reparte la Mesa bajo
+// su propio lock, y el segundo recibe "mesa llena" de SentarJugador.
+func (s *Servidor) admite(id string) bool {
+	if s.cfg.MaxConexiones <= 0 {
+		return true
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.conexiones) >= s.cfg.MaxConexiones
+	if _, registrado := s.conexiones[id]; registrado {
+		return true
+	}
+	return len(s.conexiones) < s.cfg.MaxConexiones
 }
 
 // atender corre en su propia goroutine por conexión: handshake y, si todo va
@@ -500,6 +539,12 @@ func (s *Servidor) atender(conexion net.Conn) {
 
 	cx.IDJugador = id
 	cx.Nombre = nombre
+
+	if !s.admite(id) {
+		s.cfg.Log.Printf("mesa: no se pudo sentar a %s: mesa llena", id)
+		s.rechazarConexion(cx, "mesa llena")
+		return
+	}
 
 	// Primero se intenta sentar. Si ese ID ya tiene silla, es una reconexión
 	// (el bot se cayó y volvió): se le cambia la conexión sin tocarle el saldo.
