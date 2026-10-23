@@ -12,7 +12,6 @@ import (
 	"flag"
 	"math/rand/v2"
 
-	"github.com/amvz1704/pokerFight/internal/protocolo"
 	"github.com/amvz1704/pokerFight/pkg/botsdk"
 )
 
@@ -36,13 +35,13 @@ func (b *botAleatorio) Iniciar() error {
 
 func (*botAleatorio) Nombre() string { return "aleatorio" }
 
-func (b *botAleatorio) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
+func (b *botAleatorio) Decidir(ctx context.Context, t botsdk.Turno) botsdk.Accion {
 	if len(t.Validas) == 0 {
 		return t.Fold()
 	}
 
 	switch tipo := t.Validas[b.azar.IntN(len(t.Validas))]; tipo {
-	case protocolo.Bet, protocolo.Raise:
+	case botsdk.Bet, botsdk.Raise:
 		// Un total al azar entre la subida mínima y el all-in. Apostar se
 		// encarga de recortarlo a lo que la mesa acepta.
 		minimo, techo := t.SubidaMinima(), t.Techo()
@@ -51,7 +50,7 @@ func (b *botAleatorio) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Ac
 		}
 		return t.Apostar(minimo + b.azar.Int64N(techo-minimo+1))
 	default:
-		return protocolo.Accion{Tipo: tipo}
+		return botsdk.Accion{Tipo: tipo}
 	}
 }
 

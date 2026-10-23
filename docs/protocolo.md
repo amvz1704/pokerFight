@@ -317,6 +317,12 @@ que se conectó a mitad de mano tiene `en_torneo:true` pero `en_mano:false`.
 `acciones_validas` te dice cuáles son legales **ahora**. Cualquier otra se
 descarta.
 
+Ojo con el all-in corto de un rival (por menos de una subida completa): si ya
+habías actuado en la ronda, la Mesa te vuelve a preguntar, pero solo para que
+pagues o te retires. En ese turno `acciones_validas` no trae `raise` ni `bet`, y
+`allin` solo aparece si no te alcanza para pagar. Ver
+[`reglas.md`](reglas.md#reglas-de-apuesta).
+
 ### `monto` es el TOTAL, no el incremento
 
 Este es el punto donde más bots se rompen.
@@ -399,7 +405,11 @@ dudosa "a ver si pasa".
 
 Si tu bot pierde el socket a mitad de partida, puede volver a conectarse con el
 **mismo token**: la Mesa lo reconoce y le devuelve su silla y su saldo. La
-conexión vieja se cierra.
+conexión vieja se cierra. Funciona aunque la mesa esté llena: el límite de
+conexiones cuenta jugadores, y vos ya sos uno.
+
+En la arena, el token que te llega por `-token` es nuevo en cada
+enfrentamiento: reconectá con ese, no con uno guardado de antes.
 
 Mientras estuviste desconectado, tus turnos se resolvieron con la acción segura
 y cada uno sumó un timeout. Reconectar no los borra.

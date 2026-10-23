@@ -208,7 +208,6 @@ package main
 import (
 	"context"
 
-	"github.com/amvz1704/pokerFight/internal/protocolo"
 	"github.com/amvz1704/pokerFight/pkg/botsdk"
 	"github.com/amvz1704/pokerFight/pkg/poker"
 )
@@ -217,12 +216,12 @@ type MiBot struct{}
 
 func (MiBot) Nombre() string { return "mi-bot" }
 
-func (MiBot) Decidir(ctx context.Context, t botsdk.Turno) protocolo.Accion {
+func (MiBot) Decidir(ctx context.Context, t botsdk.Turno) botsdk.Accion {
 	// El mismo evaluador que usa el crupier para el showdown.
 	if poker.Mejor(t.Mano, t.Estado.Comunitarias).Categoria >= poker.Trio {
 		return t.ApostarPozo(0.75)
 	}
-	if t.Puede(protocolo.Check) {
+	if t.Puede(botsdk.Check) {
 		return t.Check()
 	}
 	return t.Fold()

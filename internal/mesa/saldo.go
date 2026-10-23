@@ -31,21 +31,29 @@ func (m *Mesa) aportar(j *Jugador, monto uint64) uint64 {
 // cuanto lleva apostado en la ronda (j.ApuestaRonda) contra la apuesta
 // actual de la mesa. Solo se llama para jugadores que siguen en la mano y no
 // estan all-in (los unicos a quienes tiene sentido pedirles accion).
-func accionesValidas(j *Jugador, apuestaActual uint64) []protocolo.TipoAccion {
+//
+// puedeSubir es false cuando el jugador ya actuo en la ronda y desde entonces
+// solo hubo all-ins por menos de una subida completa: puede pagar o retirarse,
+// pero no volver a subir (docs/reglas.md, "Reglas de apuesta"). En ese caso el
+// all-in solo vale si no le alcanza para pagar, porque entonces es un call
+// corto y no una subida.
+func accionesValidas(j *Jugador, apuestaActual uint64, puedeSubir bool) []protocolo.TipoAccion {
 	validas := []protocolo.TipoAccion{protocolo.Fold}
 
+	var pendiente uint64
 	if apuestaActual <= j.ApuestaRonda {
 		validas = append(validas, protocolo.Check)
-		if j.Saldo > 0 {
+		if j.Saldo > 0 && puedeSubir {
 			validas = append(validas, protocolo.Bet)
 		}
 	} else {
+		pendiente = apuestaActual - j.ApuestaRonda
 		validas = append(validas, protocolo.Call)
-		if j.Saldo > apuestaActual-j.ApuestaRonda {
+		if j.Saldo > pendiente && puedeSubir {
 			validas = append(validas, protocolo.Raise)
 		}
 	}
-	if j.Saldo > 0 {
+	if j.Saldo > 0 && (puedeSubir || j.Saldo <= pendiente) {
 		validas = append(validas, protocolo.AllIn)
 	}
 	return validas
@@ -55,9 +63,9 @@ func accionesValidas(j *Jugador, apuestaActual uint64) []protocolo.TipoAccion {
 // permitidas y, para Bet/Raise, contra su saldo y la subida minima vigente.
 // Requisito del protocolo (docs/interfaces.md): "la Mesa nunca confia en el
 // bot". Una accion invalida se descarta y se aplica protocolo.AccionSegura.
-func esAccionValida(j *Jugador, accion protocolo.Accion, apuestaActual, subidaMinima uint64) bool {
+func esAccionValida(j *Jugador, accion protocolo.Accion, apuestaActual, subidaMinima uint64, puedeSubir bool) bool {
 	permitida := false
-	for _, t := range accionesValidas(j, apuestaActual) {
+	for _, t := range accionesValidas(j, apuestaActual, puedeSubir) {
 		if t == accion.Tipo {
 			permitida = true
 			break
@@ -90,9 +98,11 @@ func esAccionValida(j *Jugador, accion protocolo.Accion, apuestaActual, subidaMi
 
 // procesarAccion aplica una accion ya validada: mueve fichas, marca fold y
 // actualiza la apuesta actual / subida minima de la mesa si corresponde.
-// Devuelve si la accion reabre la ronda (obliga a los demas jugadores en
-// mano a volver a actuar porque la apuesta subio en una subida completa).
-func (m *Mesa) procesarAccion(j *Jugador, accion protocolo.Accion) (reabre bool) {
+//
+// La subida minima solo cambia con una subida completa: un all-in corto sube
+// la apuesta actual pero no la vara de la proxima subida. Quien tiene que
+// volver a actuar y si puede subir lo decide rondaApuestas.
+func (m *Mesa) procesarAccion(j *Jugador, accion protocolo.Accion) {
 	switch accion.Tipo {
 	case protocolo.Fold:
 		j.Retirado = true
@@ -111,7 +121,6 @@ func (m *Mesa) procesarAccion(j *Jugador, accion protocolo.Accion) (reabre bool)
 		m.aportar(j, objetivo-j.ApuestaRonda)
 		if incremento >= m.subidaMinima {
 			m.subidaMinima = incremento
-			reabre = true
 		}
 		m.apuestaActual = j.ApuestaRonda
 
@@ -122,10 +131,8 @@ func (m *Mesa) procesarAccion(j *Jugador, accion protocolo.Accion) (reabre bool)
 			incremento := j.ApuestaRonda - previa
 			if incremento >= m.subidaMinima {
 				m.subidaMinima = incremento
-				reabre = true
 			}
 			m.apuestaActual = j.ApuestaRonda
 		}
 	}
-	return reabre
 }

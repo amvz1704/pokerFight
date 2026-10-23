@@ -31,7 +31,12 @@ Reglas duras:
    que la Mesa, recibe `ValidarToken` por inyeccion.
 6. `pkg/` es lo unico publico: es lo que pueden importar los bots de los
    participantes, que viven fuera del modulo y por lo tanto no pueden ver
-   `internal/`.
+   `internal/`. Por eso `pkg/botsdk/tipos.go` re-exporta como **alias** los
+   tipos de `protocolo` que un bot necesita nombrar (`botsdk.Accion`,
+   `botsdk.EstadoPublico`, ...): sin ellos, un bot externo no podria ni
+   escribir la firma de `Decidir`. Lo verifica
+   `TestUnBotDeOtroModuloCompila`, que compila los ejemplos de la
+   documentacion y los bots de `bots/` desde un modulo aparte.
 
 ### 1.1 Por que el evaluador esta en `pkg/poker`
 
@@ -103,6 +108,18 @@ Un bot que pierde el socket puede volver con el **mismo token**: el Servidor
 intenta `SentarJugador` y, si ese ID ya tiene silla, cae a `ReconectarJugador`,
 que reemplaza la conexion conservando saldo, silla y estado en la mano en curso.
 El socket viejo se cierra.
+
+La reconexion entra aunque la mesa este llena: `ConfigServidor.MaxConexiones`
+cuenta **jugadores** registrados, y se controla despues del handshake, cuando
+ya se sabe quien es. Antes del handshake solo se limita cuantas conexiones
+pueden estar saludando a la vez.
+
+Como reconectar le quita el asiento a la conexion anterior, **el token tiene
+que ser secreto**: quien lo conozca puede tomar la silla. Con Casino lo es. En
+modo abierto la arena genera un token de sesion por bot y enfrentamiento
+(`tokensDeSesion`), porque el ID del participante es publico. Una mesa suelta
+en modo abierto (`cmd/mesa` sin `-casino-db`) no tiene esa proteccion: es solo
+para desarrollo.
 
 `SentarJugador` y `ReconectarJugador` son operaciones distintas a proposito:
 sentar dos veces el mismo ID es un error (dos bots con el mismo token queriendo
@@ -177,6 +194,9 @@ que importan `casino` junto a `mesa` o `arena`:
 - `cmd/mesa` con `-casino-db`: una mesa suelta reporta su partida.
 - `cmd/arena` con `-casino-db`: el torneo entero se reporta como una sola
   "partida", con la posicion de la clasificacion final.
+
+Sin Casino, la arena no deja la validacion en nil: inyecta la de sus tokens de
+sesion (§2.1).
 
 ### 4.1 Interfaz Casino (`internal/casino`)
 

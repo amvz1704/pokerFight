@@ -119,7 +119,7 @@ comparte a los participantes y lo que hace reproducible una edición.
 | ----- | ----------- | -------- |
 | `id` | sí | Único y estable. Es la clave de la clasificación. |
 | `nombre` | no | Nombre a mostrar. Por defecto, el `id`. |
-| `token` | no | Lo que el bot manda en el saludo. Por defecto, el `id`. |
+| `token` | no | Lo que manda en el saludo un bot remoto en modo abierto. Por defecto, el `id`. A los bots que lanza la arena se les da un token de sesión propio (ver [Integración con el Casino](#integración-con-el-casino)). |
 | `comando` | no | Programa a ejecutar, ya partido en argumentos. Sin él, el bot es [remoto](#bots-locales-y-bots-remotos). |
 | `directorio` | no | Directorio de trabajo del comando. |
 | `entorno` | no | Variables de entorno extra, en formato `"CLAVE=valor"`. |
@@ -282,9 +282,16 @@ jq -r '.puestos[] | "\(.nombre)\t\(.neto)"' resultados/enfrentamientos.jsonl \
 
 ## Integración con el Casino
 
-Sin `-casino-db`, la arena corre en **modo abierto**: el token de cada
-participante es directamente su identificador. Es lo que se quiere para probar
-en local.
+Sin `-casino-db`, la arena corre en **modo abierto**: no hay cuentas, y a cada
+bot que lanza la arena le pasa por `-token` un token secreto nuevo en cada
+enfrentamiento. Es lo que se quiere para probar en local.
+
+El token no puede ser el `id`: los IDs son públicos (están en `torneo.json` y en
+el estado de la mesa), y como la mesa acepta reconexiones por token, un bot que
+se presentara con el ID del rival le quitaría el asiento. Los bots **remotos**
+no se lanzan, así que no hay por dónde darles un token nuevo: en modo abierto
+usan su `token` (o su `id`) y quedan expuestos a eso. Un torneo con bots remotos
+de terceros necesita Casino.
 
 Con `-casino-db casino.json`:
 

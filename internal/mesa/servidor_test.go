@@ -263,12 +263,24 @@ func TestConexionTCPCerradaRechazaOperaciones(t *testing.T) {
 // levantarServidor abre un servidor en un puerto libre y lo apaga al terminar.
 func levantarServidor(t *testing.T, m MesaInterface, validar ValidarToken) *Servidor {
 	t.Helper()
+	return levantarServidorCon(t, ConfigServidor{}, m, validar)
+}
 
-	s := NuevoServidor(ConfigServidor{
-		Direccion:          "127.0.0.1:0",
-		TimeoutHandshakeMs: 2000,
-		Log:                logSilencioso(),
-	}, m, validar)
+// levantarServidorCon es levantarServidor con configuracion propia. La
+// direccion, el plazo de handshake y el log se completan si vienen vacios.
+func levantarServidorCon(t *testing.T, cfg ConfigServidor, m MesaInterface, validar ValidarToken) *Servidor {
+	t.Helper()
+
+	if cfg.Direccion == "" {
+		cfg.Direccion = "127.0.0.1:0"
+	}
+	if cfg.TimeoutHandshakeMs == 0 {
+		cfg.TimeoutHandshakeMs = 2000
+	}
+	if cfg.Log == nil {
+		cfg.Log = logSilencioso()
+	}
+	s := NuevoServidor(cfg, m, validar)
 
 	if err := s.Abrir(); err != nil {
 		t.Fatalf("Abrir: %v", err)
@@ -530,5 +542,62 @@ func TestBienvenidaTraeLaIdentidad(t *testing.T) {
 	}
 	if bienvenida.Silla != 2 {
 		t.Errorf("silla = %d, se esperaba 2", bienvenida.Silla)
+	}
+}
+
+// saludarComo abre una conexion, manda el saludo con el token dado y devuelve
+// la conexion junto a la respuesta de la mesa.
+func saludarComo(t *testing.T, direccion, token string) (*ConexionTCP, protocolo.MensajeMesa) {
+	t.Helper()
+	bot, err := ConectarTCP(direccion, 2000)
+	if err != nil {
+		t.Fatalf("ConectarTCP: %v", err)
+	}
+	t.Cleanup(func() { bot.Cerrar() })
+	if err := bot.EnviarMensajeBot(protocolo.MensajeBot{
+		Tipo:    protocolo.MsgSaludo,
+		Version: protocolo.VersionProtocolo,
+		Token:   token,
+	}, 2000); err != nil {
+		t.Fatalf("saludo de %s: %v", token, err)
+	}
+	resp, err := bot.RecibirMensajeMesa(2000)
+	if err != nil {
+		t.Fatalf("respuesta a %s: %v", token, err)
+	}
+	return bot, resp
+}
+
+// Con la mesa llena, un bot que perdio el socket tiene que poder volver con su
+// token (docs/interfaces.md §2.1). Un jugador nuevo, en cambio, no entra.
+func TestServidorLlenoAceptaLaReconexionDeUnJugadorSentado(t *testing.T) {
+	m := mesaDePrueba(t, 2, 1000)
+	s := levantarServidorCon(t, ConfigServidor{MaxConexiones: 2}, m, nil)
+
+	a, resp := saludarComo(t, s.Direccion(), "a")
+	if resp.Tipo != protocolo.MsgBienvenida {
+		t.Fatalf("a: tipo = %q, se esperaba bienvenida (%s)", resp.Tipo, resp.Mensaje)
+	}
+	if _, resp := saludarComo(t, s.Direccion(), "b"); resp.Tipo != protocolo.MsgBienvenida {
+		t.Fatalf("b: tipo = %q, se esperaba bienvenida (%s)", resp.Tipo, resp.Mensaje)
+	}
+	esperarConexion(t, s, "a")
+	esperarConexion(t, s, "b")
+
+	// a se cae y vuelve.
+	a.Cerrar()
+	_, resp = saludarComo(t, s.Direccion(), "a")
+	if resp.Tipo != protocolo.MsgBienvenida {
+		t.Fatalf("la reconexion de a fue rechazada con %q: %s", resp.Tipo, resp.Mensaje)
+	}
+	if resp.Silla != 0 {
+		t.Errorf("a volvio en la silla %d, se esperaba la 0 que ya tenia", resp.Silla)
+	}
+
+	if _, resp := saludarComo(t, s.Direccion(), "c"); resp.Tipo != protocolo.MsgError {
+		t.Fatalf("c: tipo = %q, se esperaba error porque la mesa esta llena", resp.Tipo)
+	}
+	if n := m.Sentados(); n != 2 {
+		t.Fatalf("hay %d sentados, se esperaban 2", n)
 	}
 }
