@@ -1,12 +1,16 @@
 # Cómo competir en pokerFight
 
 Guía del participante. Si venís a organizar el torneo, lo que buscás es
-[`arena.md`](arena.md).
+[`campeonato.md`](campeonato.md) (el torneo de las bases) o [`arena.md`](arena.md)
+(el round-robin).
 
-Escribís un bot que juega Texas Hold'em No Limit heads-up. Compite contra todos
-los demás, en las dos posiciones y con las mismas cartas. Gana el que saque más
-fichas de ventaja.
+Escribís un bot que juega Texas Hold'em No Limit. Se conecta a la arena por una
+API y decide solo, sin intervención tuya durante las partidas. Vale cualquier
+enfoque: reglas, probabilidades, Machine Learning, aprendizaje por refuerzo, IA
+generativa o decisiones al azar.
 
+- [El torneo de las bases](#el-torneo-de-las-bases)
+- [El día del torneo](#el-día-del-torneo)
 - [En 5 minutos](#en-5-minutos)
 - [Qué tenés que entregar](#qué-tenés-que-entregar)
 - [Escribir un bot en Go](#escribir-un-bot-en-go)
@@ -16,6 +20,96 @@ fichas de ventaja.
 - [Cómo se puntúa](#cómo-se-puntúa)
 - [Los errores que más cuestan](#los-errores-que-más-cuestan)
 - [Por dónde mejorar](#por-dónde-mejorar)
+
+---
+
+## El torneo de las bases
+
+El torneo oficial (detalle en [`campeonato.md`](campeonato.md)) tiene dos etapas:
+
+1. **Clasificatoria.** Cada bot empieza con **10 000 fichas**. Los bots se reparten
+   por sorteo en **mesas de 5** (si la división no es exacta, algunas de 6) y juegan
+   rondas de manos con **ciegas que suben**. El que se queda sin fichas queda
+   eliminado. Tras cada ronda **se sortean las mesas de nuevo** y cada bot
+   **conserva sus fichas**. Al final pasan los 16 o 32 con más fichas.
+2. **Final en vivo.** Mesas de 4, pasan los 2 últimos en pie; después 4 mesas, pasa
+   el último en pie; y los 4 que quedan disputan la mesa final.
+
+Lo que importa para escribir tu bot:
+
+- **Juegan más de dos.** Hay mesas de 2 a 6. Un bot pensado solo para heads-up pierde
+  información: en `estado.jugadores` están todos los rivales de la mesa.
+- **Tus fichas son una decisión.** Con 10 000 fichas y ciegas que suben, hay que
+  elegir cuándo arriesgarlas: quebrar te saca del torneo, pero jugar demasiado
+  quieto también (las ciegas te comen). Mirá `estado.ciega_grande`: cambia.
+- **No ves nombres.** Tus rivales son alias aleatorios (`j-a1b2c3`), estables durante
+  todo el campeonato. Podés aprender cómo juega uno que se te cruza en varias rondas,
+  sin saber de quién es. Dos bots de un mismo equipo pueden coincidir en una mesa: cada
+  uno juega por su cuenta y no se reconocen.
+- **El plazo por jugada es de 10 segundos.** Se permiten APIs externas (por ejemplo
+  LLMs) con el mismo límite y su costo a cargo del equipo. Pasado el plazo, la arena
+  juega check (o fold si hay que pagar) y te anota un timeout.
+
+Las secciones siguientes explican cómo escribir y probar el bot; valen igual para
+el torneo oficial y para el round-robin de la arena. Lo que dice "heads-up" o
+"neto" en [Reglas del torneo](#reglas-del-torneo) y [Cómo se puntúa](#cómo-se-puntúa)
+es del round-robin local.
+
+---
+
+## El día del torneo
+
+Las bases: *"En la clasificatoria y la final, el bot se conecta al servidor del
+torneo en sesiones con horario fijo, y basta con conectarlo y dejarlo
+ejecutándose."*
+
+**Qué hacer.** Arrancá tu bot con la dirección del servidor y **tu token**, antes
+del horario de la sesión:
+
+```bash
+./mi-bot -addr servidor-del-torneo:9000 -token <tu-token>
+```
+
+**Qué esperar.**
+
+- Tu bot se conecta **una sola vez** y se queda conectado toda la sesión. La arena
+  lo va sentando en una mesa distinta en cada ronda. Entre ronda y ronda tu socket
+  queda abierto **y en silencio**: no es una caída, no cierres.
+- Si te eliminan, tampoco llega nada. Podés dejarlo corriendo.
+- Cuando la arena cierra el socket, terminó la sesión (o el torneo). Si el torneo
+  sigue otro día, volvé a conectar.
+
+**Si te desconectás** (corte de red, el bot se cae, lo reiniciás): la arena **juega
+por vos** con check, o fold si hay que pagar, y tu silla sigue ocupada, así que
+vas perdiendo las ciegas. Cuando volvés a conectarte **con el mismo token**
+retomás la misma silla con las mismas fichas. Cuanto antes, mejor.
+
+> **El SDK de Go no reconecta solo.** Si el socket se cae, `botsdk.Correr`
+> termina. Para un torneo conviene un bucle que lo vuelva a lanzar:
+>
+> ```go
+> for {
+> 	err := botsdk.Correr(ctx, miBot, opciones)
+> 	if errors.Is(err, botsdk.ErrMesaCerro) && torneoTerminado() { return }
+> 	time.Sleep(time.Second) // y reintentar con el mismo token
+> }
+> ```
+>
+> Ojo: `ErrMesaCerro` es lo que ves tanto si la arena terminó la sesión como si se
+> cayó el servidor. Pensá cuándo darte por vencido.
+
+**Cosas que conviene saber**
+
+- Si respondés algo que no es JSON, **no te desconectan**: se toma como una acción
+  inválida (la arena juega la segura) y seguís en pie.
+- Si tardás más del plazo, la respuesta llega tarde y se descarta... **salvo que
+  llegue dentro de la misma mano pero para otra jugada**: hoy una respuesta tardía
+  puede tomarse como la de la jugada siguiente (ver
+  [`interfaces.md`](interfaces.md#8-estado-del-proyecto)). Si usás un LLM,
+  **respondé antes del plazo y con margen**: una respuesta tardía no solo se pierde,
+  puede aplicarse donde no corresponde.
+- Dos procesos con el mismo token se pisan: el último en conectar se queda con el
+  asiento.
 
 ---
 

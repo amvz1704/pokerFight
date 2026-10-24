@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel del campeonato</title>
+<style>
+  :root {
+    --fondo: #f6f5f1; --superficie: #ffffff; --borde: #dcd9d0; --texto: #1d1c19; --suave: #6b6960;
+    --acento: #1f6f4a; --acento-texto: #ffffff; --peligro: #b3261e; --aviso: #8a5a00; --aviso-fondo: #fdf3dc;
+    --ok-fondo: #e3f3ea; --mal-fondo: #fbe5e3; --rojo-carta: #c0392b;
+    --sombra: 0 1px 2px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #15161a; --superficie: #1e2025; --borde: #33363d; --texto: #ececea; --suave: #9b9a95;
+      --acento: #4cc38a; --acento-texto: #08130d; --peligro: #ff7b72; --aviso: #f0c05a; --aviso-fondo: #342b14;
+      --ok-fondo: #173326; --mal-fondo: #3a1c1a; --rojo-carta: #ff7b72; --sombra: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--superficie); border-bottom: 1px solid var(--borde); padding: 14px 20px;
+           display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; position: sticky; top: 0; z-index: 5; }
+  h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
+  /* minmax(0, 1fr): sin el 0, una celda de la grilla no puede ser mas angosta que su
+     contenido y una tabla ancha estira toda la pagina en vez de scrollear sola. */
+  main { max-width: 1280px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  section { min-width: 0; background: var(--superficie); border: 1px solid var(--borde); border-radius: 10px; padding: 16px 18px; box-shadow: var(--sombra); }
+  .fila { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .espacio { flex: 1; }
+  .etiqueta { font-size: 12px; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+  .dato { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .insignia { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+              background: var(--borde); color: var(--texto); }
+  .insignia.verde { background: var(--ok-fondo); color: var(--acento); }
+  .insignia.roja { background: var(--mal-fondo); color: var(--peligro); }
+  .insignia.ambar { background: var(--aviso-fondo); color: var(--aviso); }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--borde); background: var(--superficie); color: var(--texto);
+           padding: 7px 14px; border-radius: 8px; font-weight: 550; }
+  button:hover:not(:disabled) { border-color: var(--suave); }
+  button.principal { background: var(--acento); color: var(--acento-texto); border-color: var(--acento); }
+  button.peligro { color: var(--peligro); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input, select { font: inherit; color: var(--texto); background: var(--fondo); border: 1px solid var(--borde);
+                  border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  input:disabled, select:disabled { opacity: .4; }
+  input[type=number] { width: 84px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+  th { font-size: 12px; color: var(--suave); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; }
+  .desliza { overflow-x: auto; }
+  .campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .campos label { display: grid; gap: 4px; font-size: 13px; color: var(--suave); }
+  .campos input { width: 100%; }
+  .error { color: var(--peligro); background: var(--mal-fondo); padding: 8px 12px; border-radius: 8px; margin-top: 10px; }
+  .vacio { color: var(--suave); padding: 6px 0; }
+  .plan { display: grid; gap: 8px; margin-top: 14px; }
+  .plan .fase { border: 1px solid var(--borde); border-radius: 8px; padding: 10px 14px; display: grid; gap: 4px; }
+  .plan .titulo { font-weight: 650; }
+  .plan .detalle { color: var(--suave); }
+  .plan .flujo { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+  .aviso { color: var(--aviso); background: var(--aviso-fondo); padding: 4px 10px; border-radius: 6px; font-size: 13px; }
+  .mesas { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+  .mesa { border: 1px solid var(--borde); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; }
+  .mesa .cab { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--suave); }
+  .mesa .cab b { color: var(--texto); }
+  .tablero { display: flex; gap: 5px; min-height: 30px; align-items: center; }
+  .carta { border: 1px solid var(--borde); border-radius: 5px; padding: 1px 6px; font-weight: 700; background: var(--fondo); }
+  .carta.roja { color: var(--rojo-carta); }
+  .asiento { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline; font-size: 14px; }
+  .asiento.fuera { color: var(--suave); text-decoration: line-through; }
+  .asiento .quien { font-family: ui-monospace, monospace; }
+  .punto { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--peligro); }
+  .punto.vivo { background: var(--acento); }
+  .grande { font-size: 20px; }
+  .progreso { height: 6px; background: var(--borde); border-radius: 99px; overflow: hidden; min-width: 120px; }
+  .progreso > div { height: 100%; background: var(--acento); transition: width .4s; }
+  #acceso { max-width: 420px; margin: 12vh auto; }
+  .oculto { display: none !important; }
+  tr.campeon td { background: var(--ok-fondo); font-weight: 650; }
+  tr.fuera td { color: var(--suave); }
+  .inactivo { opacity: .5; }
+</style>
+</head>
+<body>
+
+<div id="acceso" class="oculto">
+  <section>
+    <h1>Panel del campeonato</h1>
+    <p class="vacio">Ingresá la clave de administración que imprimió el servidor al arrancar.</p>
+    <div class="fila">
+      <input id="clave" type="password" placeholder="Clave" autocomplete="off" style="flex:1">
+      <button class="principal" id="entrar">Entrar</button>
+    </div>
+    <div id="errorAcceso" class="error oculto"></div>
+  </section>
+</div>
+
+<div id="app" class="oculto">
+<header>
+  <h1 id="titulo">Campeonato</h1>
+  <span id="etapa" class="insignia"></span>
+  <div><div class="etiqueta">Fase</div><div class="dato" id="fase">—</div></div>
+  <div><div class="etiqueta">Ronda</div><div class="dato" id="ronda">—</div></div>
+  <div><div class="etiqueta">Bots conectados</div><div class="dato" id="conectados">—</div></div>
+  <div><div class="etiqueta">Dirección de los bots</div><div class="dato" id="direccion">—</div></div>
+  <span class="espacio"></span>
+  <div class="fila">
+    <button class="principal" id="bRonda">Jugar siguiente ronda</button>
+    <button id="bAuto">Modo automático</button>
+    <button id="bPausar">Pausar</button>
+    <button class="peligro" id="bCancelar">Cancelar ronda</button>
+  </div>
+</header>
+
+<main>
+  <div id="errorGeneral" class="error oculto"></div>
+  <section id="bannerFinal" class="oculto"></section>
+
+  <section id="seccionConfig">
+    <div class="fila" style="margin-bottom:10px">
+      <h2 style="margin:0">Configuración</h2>
+      <span id="estadoConfig" class="insignia"></span>
+      <span class="espacio"></span>
+      <button id="bDescartar">Descartar cambios</button>
+      <button class="principal" id="bGuardar">Guardar configuración</button>
+    </div>
+    <div class="campos">
+      <label>Nombre<input id="cNombre" type="text"></label>
+      <label>Plazo por jugada (ms)<input id="cTimeout" type="number" min="100" step="100"></label>
+      <label>Semilla (vacía = azar real)<input id="cSemilla" type="text" inputmode="numeric" placeholder="sin semilla"></label>
+      <label>Jugadores para la vista previa<input id="cJugadores" type="number" min="2" max="100000"></label>
+      <label style="grid-template-columns:auto 1fr;align-items:center;gap:8px"><input id="cHistorial" type="checkbox"> Guardar historial de manos</label>
+    </div>
+
+    <div class="desliza">
+      <table id="tablaFases">
+        <thead><tr>
+          <th>Fase</th><th>Tipo</th><th class="num">Jugadores<br>por mesa</th><th class="num">Mesas<br>(0 = auto)</th>
+          <th class="num">Fichas</th><th class="num">Rondas</th><th class="num">Manos<br>por ronda</th><th class="num">Pasan<br>(0 = auto)</th>
+          <th class="num">Pasan<br>por mesa</th><th class="num">Máx. manos<br>por mesa</th><th>Ciegas chicas por nivel</th><th class="num">Manos<br>por nivel</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="fila" style="margin-top:10px"><button id="bAgregarFase">Agregar fase</button>
+      <span class="vacio">«Mesas» fija la cantidad de mesas y el tamaño sale de cuántos lleguen; con 0, se arma por «jugadores por mesa».</span></div>
+
+    <div id="errorPlan" class="error oculto"></div>
+    <div class="plan" id="plan"></div>
+  </section>
+
+  <section>
+    <h2>Mesas en juego <span class="insignia" id="cuentaMesas">0</span></h2>
+    <div class="mesas" id="mesas"></div>
+  </section>
+
+  <section>
+    <h2>Jugadores <span class="insignia" id="cuentaJugadores">0</span></h2>
+    <div class="desliza"><table id="tablaJugadores">
+      <thead><tr><th></th><th>Alias</th><th>Equipo</th><th>Bot</th><th>Estado</th><th class="num">Fichas</th><th class="num">Manos</th><th class="num">Timeouts</th><th class="num">Caídas</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Rondas jugadas</h2>
+    <div class="desliza"><table id="tablaRondas">
+      <thead><tr><th>Fase</th><th class="num">Ronda</th><th class="num">Mesas</th><th class="num">Manos</th><th>Terminó</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+</div>
+
+<script>
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// useGrouping: 'always' porque el locale es no agrupa los numeros de 4 cifras (8300 pero 14.000).
+const numero = (n) => Number(n || 0).toLocaleString('es', { useGrouping: 'always' });
+
+// --- Acceso ---------------------------------------------------------------------
+let clave = sessionStorage.getItem('clave') || '';
+{
+  const url = new URL(location.href);
+  const enUrl = url.searchParams.get('clave');
+  if (enUrl) {
+    clave = enUrl;
+    sessionStorage.setItem('clave', clave);
+    // La clave no se queda en la barra de direcciones ni en el historial.
+    url.searchParams.delete('clave');
+    history.replaceState(null, '', url);
+  }
+}
+
+async function api(ruta, opciones = {}) {
+  const respuesta = await fetch(ruta, {
+    ...opciones,
+    headers: { 'X-Clave': clave, 'Content-Type': 'application/json', ...(opciones.headers || {}) },
+  });
+  const cuerpo = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok) {
+    const error = new Error(cuerpo.error || respuesta.statusText);
+    error.estado = respuesta.status;
+    throw error;
+  }
+  return cuerpo;
+}
+
+// --- Estado de la página ----------------------------------------------------------
+let snap = null;
+let formCargado = false;
+let sucio = false;
+let temporizadorPlan = null;
+let contadorPlan = 0;
+
+const FASE_NUEVA = {
+  nombre: 'Fase nueva', tipo: 'eliminatoria', jugadores_por_mesa: 4, mesas: 0, stack: 10000,
+  rondas: 0, manos_por_ronda: 0, clasifican: 0, avanzan_por_mesa: 1, max_manos: 600,
+  ciegas: { niveles: [100, 150, 200, 300, 400, 600, 800, 1200], manos_por_nivel: 30 },
+};
+
+// --- Formulario de configuración -----------------------------------------------------
+const CAMPOS_FASE = [
+  ['nombre', 'text', 130], ['tipo', 'select'], ['jugadores_por_mesa', 'number'], ['mesas', 'number'],
+  ['stack', 'number'], ['rondas', 'number'], ['manos_por_ronda', 'number'], ['clasifican', 'number'],
+  ['avanzan_por_mesa', 'number'], ['max_manos', 'number'], ['niveles', 'text', 190], ['manos_por_nivel', 'number'],
+];
+const SOLO_CLASIFICATORIA = ['rondas', 'manos_por_ronda', 'clasifican'];
+const SOLO_ELIMINATORIA = ['avanzan_por_mesa', 'max_manos'];
+
+function filaFase(f) {
+  const tr = document.createElement('tr');
+  for (const [campo, tipo, ancho] of CAMPOS_FASE) {
+    const td = document.createElement('td');
+    if (tipo === 'number') td.className = 'num';
+    let el;
+    if (tipo === 'select') {
+      el = document.createElement('select');
+      el.innerHTML = '<option value="clasificatoria">clasificatoria</option><option value="eliminatoria">eliminatoria</option>';
+      el.value = f.tipo;
+    } else {
+      el = document.createElement('input');
+      el.type = tipo;
+      if (tipo === 'number') el.min = '0';
+      if (ancho) el.style.width = ancho + 'px';
+      el.value = campo === 'niveles' ? (f.ciegas.niveles || []).join(', ')
+               : campo === 'manos_por_nivel' ? f.ciegas.manos_por_nivel
+               : (f[campo] ?? '');
+    }
+    el.dataset.campo = campo;
+    el.addEventListener('input', () => { aplicarTipo(tr); alCambiar(); });
+    td.appendChild(el);
+    tr.appendChild(td);
+  }
+  const td = document.createElement('td');
+  const quitar = document.createElement('button');
+  quitar.textContent = '✕';
+  quitar.title = 'Quitar fase';
+  quitar.addEventListener('click', () => { tr.remove(); alCambiar(); });
+  td.appendChild(quitar);
+  tr.appendChild(td);
+  aplicarTipo(tr);
+  return tr;
+}
+
+// Los campos que no corresponden al tipo de fase se desactivan: así se ve qué
+// cuenta en cada una.
+function aplicarTipo(tr) {
+  const tipo = $('[data-campo=tipo]', tr).value;
+  for (const campo of SOLO_CLASIFICATORIA) $(`[data-campo=${campo}]`, tr).disabled = tipo !== 'clasificatoria';
+  for (const campo of SOLO_ELIMINATORIA) $(`[data-campo=${campo}]`, tr).disabled = tipo !== 'eliminatoria';
+}
+
+function cargarFormulario(cfg) {
+  $('#cNombre').value = cfg.nombre || '';
+  $('#cTimeout').value = cfg.mesa?.timeout_ms ?? 10000;
+  $('#cSemilla').value = cfg.semilla ?? '';
+  $('#cHistorial').checked = !!cfg.guardar_historial;
+  const cuerpo = $('#tablaFases tbody');
+  cuerpo.innerHTML = '';
+  for (const f of cfg.fases || []) cuerpo.appendChild(filaFase(f));
+  if (!$('#cJugadores').value) $('#cJugadores').value = snap?.inscritos || 2;
+  formCargado = true;
+  sucio = false;
+}
+
+function leerFormulario() {
+  const entero = (v) => (v === '' || v == null ? 0 : Math.trunc(Number(v)));
+  const fases = [...$('#tablaFases tbody').children].map((tr) => {
+    const v = (campo) => $(`[data-campo=${campo}]`, tr);
+    const tipo = v('tipo').value;
+    const niveles = v('niveles').value.split(/[\s,;]+/).filter(Boolean).map(Number);
+    return {
+      nombre: v('nombre').value, tipo,
+      jugadores_por_mesa: entero(v('jugadores_por_mesa').value), mesas: entero(v('mesas').value),
+      stack: entero(v('stack').value),
+      rondas: tipo === 'clasificatoria' ? entero(v('rondas').value) : 0,
+      manos_por_ronda: tipo === 'clasificatoria' ? entero(v('manos_por_ronda').value) : 0,
+      clasifican: tipo === 'clasificatoria' ? entero(v('clasifican').value) : 0,
+      avanzan_por_mesa: tipo === 'eliminatoria' ? entero(v('avanzan_por_mesa').value) : 0,
+      max_manos: tipo === 'eliminatoria' ? entero(v('max_manos').value) : 0,
+      ciegas: { niveles, manos_por_nivel: entero(v('manos_por_nivel').value) },
+    };
+  });
+  const cfg = {
+    nombre: $('#cNombre').value,
+    mesa: { timeout_ms: entero($('#cTimeout').value) },
+    salida: snap?.config?.salida || '',
+    guardar_historial: $('#cHistorial').checked,
+    fases,
+  };
+  const semilla = $('#cSemilla').value.trim();
+  if (semilla !== '') {
+    const n = Number(semilla);
+    if (!Number.isSafeInteger(n) || n < 0) throw new Error('La semilla tiene que ser un entero positivo (hasta 9007199254740991).');
+    cfg.semilla = n;
+  }
+  return cfg;
+}
+
+function alCambiar() {
+  sucio = true;
+  actualizarEstadoConfig();
+  clearTimeout(temporizadorPlan);
+  temporizadorPlan = setTimeout(pedirPlan, 250);
+}
+
+function actualizarEstadoConfig() {
+  const editable = snap && snap.etapa === 'inscripcion';
+  const marca = $('#estadoConfig');
+  if (!editable) { marca.textContent = 'bloqueada: el campeonato ya empezó'; marca.className = 'insignia ambar'; }
+  else if (sucio) { marca.textContent = 'cambios sin guardar'; marca.className = 'insignia ambar'; }
+  else { marca.textContent = 'guardada'; marca.className = 'insignia verde'; }
+  for (const el of $('#seccionConfig').querySelectorAll('.campos input, #tablaFases input, #tablaFases select, #tablaFases button, #bAgregarFase')) {
+    if (!editable) el.disabled = true;
+    else if (el.dataset.campo) aplicarTipo(el.closest('tr'));
+    else el.disabled = false;
+  }
+  $('#cJugadores').disabled = false;
+  $('#bGuardar').disabled = !editable || !sucio;
+  $('#bDescartar').disabled = !editable || !sucio;
+}
+
+// --- Vista previa del plan ----------------------------------------------------------------
+async function pedirPlan() {
+  const n = ++contadorPlan;
+  const error = $('#errorPlan');
+  let cfg;
+  try { cfg = leerFormulario(); } catch (e) { error.textContent = e.message; error.classList.remove('oculto'); return; }
+  try {
+    const jugadores = Number($('#cJugadores').value) || 0;
+    const r = await api(`/api/plan?jugadores=${jugadores}`, { method: 'POST', body: JSON.stringify(cfg) });
+    if (n !== contadorPlan) return; // Llegó una respuesta más nueva.
+    error.classList.add('oculto');
+    pintarPlan(r.plan, r.jugadores);
+  } catch (e) {
+    if (n !== contadorPlan) return;
+    error.textContent = e.message;
+    error.classList.remove('oculto');
+  }
+}
+
+function pintarPlan(plan, jugadores) {
+  const cont = $('#plan');
+  if (!plan || !plan.length) { cont.innerHTML = ''; return; }
+  cont.innerHTML = `<div class="etiqueta">Así quedaría con ${numero(jugadores)} jugadores</div>` + plan.map((p) => {
+    const detalle = p.tipo === 'clasificatoria'
+      ? `${p.rondas} ronda${p.rondas === 1 ? '' : 's'} de hasta ${numero(p.manos_por_mesa)} manos; las mesas se sortean de nuevo en cada una`
+      : `una sola ronda, hasta ${numero(p.manos_por_mesa)} manos por mesa`;
+    return `<div class="fase">
+      <div class="titulo">${p.indice + 1}. ${esc(p.nombre)} <span class="insignia">${esc(p.tipo)}</span></div>
+      <div class="flujo"><span class="grande dato">${numero(p.entran)}</span> entran →
+        <span class="dato">${esc(p.mesas_texto || 'sin mesas')}</span> →
+        <span class="grande dato">${numero(p.salen)}</span> pasan</div>
+      <div class="detalle">${esc(detalle)}</div>
+      ${(p.avisos || []).map((a) => `<div class="aviso">⚠ ${esc(a)}</div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+// --- Pintar el estado ------------------------------------------------------------------------
+const ETAPAS = {
+  inscripcion: ['Sin empezar', ''], en_curso: ['En curso', 'verde'], terminado: ['Terminado', 'ambar'],
+};
+const ESTADOS_JUGADOR = {
+  en_juego: ['En juego', 'verde'], quiebra: ['Quebró', 'roja'], no_clasifico: ['No clasificó', ''],
+  eliminado: ['Eliminado', 'roja'], campeon: ['Campeón', 'verde'],
+};
+
+function carta(c) {
+  const palo = { c: '♣', d: '♦', h: '♥', s: '♠' }[c.slice(-1)] || c.slice(-1);
+  const rango = c.slice(0, -1) === 'T' ? '10' : c.slice(0, -1);
+  const roja = c.endsWith('h') || c.endsWith('d');
+  return `<span class="carta ${roja ? 'roja' : ''}">${esc(rango)}${palo}</span>`;
+}
+
+function pintar(s) {
+  document.title = `${s.nombre} · panel`;
+  $('#titulo').textContent = s.nombre;
+  const [textoEtapa, claseEtapa] = ETAPAS[s.etapa] || [s.etapa, ''];
+  $('#etapa').textContent = s.jugando ? 'Jugando…' : textoEtapa;
+  $('#etapa').className = 'insignia ' + (s.jugando ? 'verde' : claseEtapa);
+  $('#fase').textContent = s.etapa === 'terminado' ? 'Terminado' : `${s.fase + 1}. ${s.fase_nombre}`;
+  $('#ronda').textContent = s.etapa === 'terminado' ? '—' : `${s.ronda} de ${s.rondas_fase}`;
+  $('#conectados').textContent = `${s.conectados} / ${s.esperados}`;
+  $('#direccion').textContent = s.bots;
+
+  const terminado = s.etapa === 'terminado';
+  $('#bRonda').disabled = s.jugando || terminado;
+  $('#bAuto').disabled = s.jugando || terminado;
+  $('#bPausar').disabled = !(s.jugando && s.auto) || s.pausando;
+  $('#bPausar').textContent = s.pausando ? 'Pausando…' : 'Pausar';
+  $('#bCancelar').disabled = !s.jugando;
+  $('#bAuto').textContent = s.jugando && s.auto ? 'Automático activo' : 'Modo automático';
+
+  const error = $('#errorGeneral');
+  if (s.error) { error.textContent = 'La última ronda no se pudo jugar: ' + s.error; error.classList.remove('oculto'); }
+  else error.classList.add('oculto');
+
+  const banner = $('#bannerFinal');
+  if (s.campeon) {
+    const j = (s.jugadores || []).find((x) => x.alias === s.campeon);
+    banner.innerHTML = `<div class="etiqueta">Campeón</div><div class="grande dato">${esc(j ? j.equipo + ' · ' + j.bot : s.campeon)}</div>
+      <div class="detalle vacio">alias ${esc(s.campeon)}</div>`;
+    banner.classList.remove('oculto');
+  } else banner.classList.add('oculto');
+
+  if (!formCargado) cargarFormulario(s.config);
+  actualizarEstadoConfig();
+  if (!sucio && formCargado && $('#plan').childElementCount === 0) pintarPlan(s.plan, s.plan_jugadores);
+
+  // Las listas pueden venir vacías o ausentes: no se asume nada.
+  pintarMesas(s.mesas || []);
+  pintarJugadores(s.jugadores || []);
+  pintarRondas(s.rondas || []);
+}
+
+function pintarMesas(mesas) {
+  $('#cuentaMesas').textContent = mesas.length;
+  $('#mesas').innerHTML = mesas.length ? mesas.map((m) => `
+    <div class="mesa">
+      <div class="cab"><b>${esc(m.id)}</b><span>mano ${m.mano} · ${esc(m.etapa || 'preflop')}</span></div>
+      <div class="cab"><span>Pozo <b>${numero(m.pozo)}</b></span><span>Ciegas ${numero(m.ciega_chica)}/${numero(m.ciega_grande)}</span></div>
+      <div class="tablero">${(m.comunitarias || []).length ? m.comunitarias.map(carta).join('') : '<span class="vacio">sin cartas comunitarias</span>'}</div>
+      ${(m.asientos || []).map((a) => `
+        <div class="asiento ${a.eliminado ? 'fuera' : ''}">
+          <span class="quien"><span class="punto ${a.conectado ? 'vivo' : ''}" title="${a.conectado ? 'conectado' : 'sin conexión'}"></span>${esc(a.alias)}${a.eliminado ? ' · eliminado' : (a.retirado ? ' · fold' : '') + (a.allin ? ' · all-in' : '')}</span>
+          <span class="dato">${numero(a.fichas)}</span>
+          <span class="vacio">${a.apuesta ? 'apuesta ' + numero(a.apuesta) : ''}</span>
+        </div>`).join('')}
+    </div>`).join('') : '<div class="vacio">No hay ninguna ronda en juego.</div>';
+}
+
+function pintarJugadores(jugadores) {
+  $('#cuentaJugadores').textContent = jugadores.length;
+  $('#tablaJugadores tbody').innerHTML = jugadores.map((j) => {
+    const [texto, clase] = ESTADOS_JUGADOR[j.estado] || [j.estado, ''];
+    const donde = j.salio_en ? ` <span class="vacio">(${esc(j.salio_en)})</span>` : '';
+    return `<tr class="${j.estado === 'campeon' ? 'campeon' : (j.estado !== 'en_juego' ? 'fuera' : '')}">
+      <td><span class="punto ${j.conectado ? 'vivo' : ''}" title="${j.conectado ? 'conectado' : 'sin conexión'}"></span></td>
+      <td style="font-family:ui-monospace,monospace">${esc(j.alias)}</td><td>${esc(j.equipo)}</td><td>${esc(j.bot)}</td>
+      <td><span class="insignia ${clase}">${texto}</span>${donde}</td>
+      <td class="num">${numero(j.fichas)}</td><td class="num">${numero(j.manos_jugadas)}</td>
+      <td class="num">${numero(j.timeouts)}</td><td class="num">${numero(j.caidas)}</td></tr>`;
+  }).join('');
+}
+
+function pintarRondas(rondas) {
+  $('#tablaRondas tbody').innerHTML = rondas.length ? [...rondas].reverse().map((r) => `
+    <tr><td>${r.fase + 1}. ${esc(r.fase_nombre)}</td><td class="num">${r.ronda}</td><td class="num">${r.mesas}</td>
+    <td class="num">${numero(r.manos)}</td><td>${new Date(r.fin).toLocaleTimeString('es')}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="vacio">Todavía no se jugó ninguna ronda.</td></tr>';
+}
+
+// --- Acciones -----------------------------------------------------------------------------------
+async function accion(ruta, opciones = {}) {
+  try { await api(ruta, { method: 'POST', ...opciones }); await refrescar(); }
+  catch (e) { mostrarError(e.message); }
+}
+
+function mostrarError(mensaje) {
+  const error = $('#errorGeneral');
+  error.textContent = mensaje;
+  error.classList.remove('oculto');
+}
+
+function confirmarConexiones() {
+  if (!snap) return false;
+  if (sucio) { alert('Hay cambios sin guardar en la configuración. Guardalos o descartalos antes de jugar.'); return false; }
+  const faltan = snap.esperados - snap.conectados;
+  if (faltan > 0) {
+    return confirm(`${faltan} de ${snap.esperados} bots no están conectados.\n\nLa arena va a jugar por ellos con check o fold (como piden las bases) y van a ir perdiendo fichas.\n\n¿Jugar de todos modos?`);
+  }
+  return true;
+}
+
+$('#bRonda').addEventListener('click', () => { if (confirmarConexiones()) accion('/api/ronda'); });
+$('#bAuto').addEventListener('click', () => { if (confirmarConexiones()) accion('/api/auto'); });
+$('#bPausar').addEventListener('click', () => accion('/api/pausar'));
+$('#bCancelar').addEventListener('click', () => {
+  if (confirm('Se descarta la ronda en juego entera: no se aplica ningún resultado.\n\n¿Cancelar la ronda?')) accion('/api/cancelar');
+});
+$('#bAgregarFase').addEventListener('click', () => { $('#tablaFases tbody').appendChild(filaFase(FASE_NUEVA)); alCambiar(); });
+$('#bDescartar').addEventListener('click', () => { cargarFormulario(snap.config); pintarPlan(snap.plan, snap.plan_jugadores); actualizarEstadoConfig(); });
+$('#bGuardar').addEventListener('click', async () => {
+  try {
+    const cfg = leerFormulario();
+    snap = await api('/api/config', { method: 'PUT', body: JSON.stringify(cfg) });
+    cargarFormulario(snap.config);
+    pintar(snap);
+    $('#errorGeneral').classList.add('oculto');
+  } catch (e) { mostrarError('No se guardó: ' + e.message); }
+});
+for (const id of ['cNombre', 'cTimeout', 'cSemilla', 'cHistorial']) $('#' + id).addEventListener('input', alCambiar);
+// Cambiar los jugadores de la vista previa no modifica la configuración.
+$('#cJugadores').addEventListener('input', () => { clearTimeout(temporizadorPlan); temporizadorPlan = setTimeout(pedirPlan, 250); });
+
+// --- Ciclo ------------------------------------------------------------------------------------------
+async function refrescar() {
+  try {
+    snap = await api('/api/estado');
+    $('#acceso').classList.add('oculto');
+    $('#app').classList.remove('oculto');
+    pintar(snap);
+  } catch (e) {
+    if (e.estado === 401) { mostrarAcceso(clave ? 'Clave incorrecta.' : ''); return false; }
+    mostrarError('Sin conexión con el servidor: ' + e.message);
+  }
+  return true;
+}
+
+function mostrarAcceso(mensaje) {
+  sessionStorage.removeItem('clave');
+  $('#app').classList.add('oculto');
+  $('#acceso').classList.remove('oculto');
+  const error = $('#errorAcceso');
+  error.textContent = mensaje;
+  error.classList.toggle('oculto', !mensaje);
+}
+
+$('#entrar').addEventListener('click', async () => {
+  clave = $('#clave').value.trim();
+  sessionStorage.setItem('clave', clave);
+  if (await refrescar()) iniciarCiclo();
+});
+$('#clave').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#entrar').click(); });
+
+let ciclo = null;
+function iniciarCiclo() {
+  clearInterval(ciclo);
+  ciclo = setInterval(refrescar, 1500);
+}
+
+(async () => {
+  if (!clave) { mostrarAcceso(''); return; }
+  if (await refrescar()) iniciarCiclo();
+})();
+</script>
+</body>
+</html>

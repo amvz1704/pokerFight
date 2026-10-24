@@ -46,6 +46,11 @@ type Jugador struct {
 	// estadísticas del torneo y para detectar bots que se conectan tarde.
 	ManosJugadas uint64
 
+	// SaldoInicioMano son las fichas con las que arrancó la mano en curso. Sirve
+	// para desempatar cuando varios jugadores quiebran en la misma mano: queda
+	// mejor clasificado el que tenía más al empezarla.
+	SaldoInicioMano uint64
+
 	// NetoAcumulado son las fichas ganadas o perdidas a lo largo de toda la
 	// partida. Solo lo usa el modo ConfigPartida.ReponerStack: sin reposición,
 	// el neto es simplemente Saldo - StackInicial y este campo queda en 0.
@@ -130,6 +135,52 @@ type ConfigPartida struct {
 	// Exige CantidadRondas > 0: sin eliminación posible, una partida sin límite
 	// de manos no termina nunca.
 	ReponerStack bool
+
+	// Ciegas, si no es nil, decide las ciegas de cada mano a partir de su número
+	// (la primera mano de la partida es la 1) y reemplaza a CiegaMenor/CiegaMayor.
+	// Es lo que permite que las ciegas suban a medida que avanza un torneo: sin
+	// ellas, con stacks grandes casi nadie queda eliminado y la fase no termina.
+	//
+	// Se consulta una vez por mano, al repartirla, así que una mano nunca cambia
+	// de ciegas a mitad de camino.
+	Ciegas func(numeroMano int64) (chica, grande uint64)
+
+	// StackPorJugador fija las fichas con las que se sienta cada jugador (por
+	// ID), en lugar de StackInicial. Los que no figuran usan StackInicial.
+	// Existe para los torneos por fases, donde cada bot conserva las fichas que
+	// ganó o perdió en la ronda anterior.
+	StackPorJugador map[string]uint64
+
+	// HastaQueden es con cuántos jugadores con fichas termina la partida. 0 o 1
+	// significan "hasta que quede uno", que es el comportamiento de siempre. Con
+	// 2, la partida corta cuando quedan dos: las eliminatorias de "pasan los dos
+	// últimos en pie" no tienen que seguir hasta el heads-up.
+	HastaQueden int
+}
+
+// ciegasDeLaMano devuelve las ciegas de la mano número n, con la función
+// Ciegas si hay y con las fijas de la configuración si no.
+func (c ConfigPartida) ciegasDeLaMano(n int64) (chica, grande uint64) {
+	if c.Ciegas != nil {
+		return c.Ciegas(n)
+	}
+	return c.CiegaMenor, c.CiegaMayor
+}
+
+// stackDe son las fichas con las que se sienta un jugador.
+func (c ConfigPartida) stackDe(id string) uint64 {
+	if fichas, ok := c.StackPorJugador[id]; ok {
+		return fichas
+	}
+	return c.StackInicial
+}
+
+// hastaQueden normaliza HastaQueden: nunca menos de uno.
+func (c ConfigPartida) hastaQueden() int {
+	if c.HastaQueden < 1 {
+		return 1
+	}
+	return c.HastaQueden
 }
 
 // ResumenJugador es la posición final de un jugador al terminar la partida.
@@ -209,6 +260,10 @@ type Mesa struct {
 	subidaMinima  uint64 // Incremento mínimo exigido para el próximo Raise.
 	historial     []protocolo.AccionRegistrada
 
+	// Ciegas de la mano en curso (0 antes de que empiece la primera). Salen de
+	// ConfigPartida.Ciegas y se fijan al repartir cada mano.
+	ciegaChica, ciegaGrande uint64
+
 	// ordenEliminacion guarda los IDs en el orden en que se quedaron sin
 	// fichas. Es lo que permite armar una clasificación de torneo correcta:
 	// entre dos jugadores con 0 fichas, gana el puesto más alto el que
@@ -268,7 +323,7 @@ func (m *Mesa) SentarJugador(idJugador string, nombreJugador string, c ConexionM
 		return fmt.Errorf("mesa [ID: %s]: está llena, el jugador %s [ID: %s] no pudo sentarse", m.ID, nombreJugador, idJugador)
 	}
 	// Sentamos al jugador
-	m.Jugadores[sillaLibre] = NuevoJugador(idJugador, nombreJugador, m.CfgPartida.StackInicial, int8(sillaLibre), c)
+	m.Jugadores[sillaLibre] = NuevoJugador(idJugador, nombreJugador, m.CfgPartida.stackDe(idJugador), int8(sillaLibre), c)
 	m.CfgMesa.ActualJugadores = uint8(m.sentadosSinLock())
 	return nil
 }
@@ -291,7 +346,7 @@ func (m *Mesa) SentarJugadorEnSilla(idJugador string, nombreJugador string, sill
 		return fmt.Errorf("mesa [ID: %s]: la silla %d ya está ocupada por [ID: %s]", m.ID, silla, ocupante.ID)
 	}
 
-	m.Jugadores[silla] = NuevoJugador(idJugador, nombreJugador, m.CfgPartida.StackInicial, int8(silla), c)
+	m.Jugadores[silla] = NuevoJugador(idJugador, nombreJugador, m.CfgPartida.stackDe(idJugador), int8(silla), c)
 	m.CfgMesa.ActualJugadores = uint8(m.sentadosSinLock())
 	return nil
 }
@@ -410,8 +465,9 @@ func (m *Mesa) Jugar(ctx context.Context) (ResumenPartida, error) {
 		jugadoresActivos := m.ObtenerJugadoresActivos()
 		m.Mu.Unlock()
 
-		// Si solo queda un jugador activo, es el ganador
-		if len(jugadoresActivos) <= 1 {
+		// Si ya quedan pocos jugadores con fichas, la partida terminó (uno solo,
+		// salvo que la configuración pida cortar antes: HastaQueden).
+		if len(jugadoresActivos) <= m.CfgPartida.hastaQueden() {
 			break
 		}
 
@@ -451,6 +507,7 @@ func (m *Mesa) jugarMano(ctx context.Context, jugadoresActivos []*Jugador, numer
 
 	m.Mu.Lock()
 	m.Pozo = crupier.NuevoPozo(idsActivos)
+	m.ciegaChica, m.ciegaGrande = m.CfgPartida.ciegasDeLaMano(numeroMano)
 	m.idManoActual = idMano
 	m.etapaActual = protocolo.PreFlop
 	m.comunitarias = nil
@@ -474,6 +531,7 @@ func (m *Mesa) jugarMano(ctx context.Context, jugadoresActivos []*Jugador, numer
 			j.NetoAcumulado += int64(j.Saldo) - int64(m.CfgPartida.StackInicial)
 			j.Saldo = m.CfgPartida.StackInicial
 		}
+		j.SaldoInicioMano = j.Saldo
 	}
 	m.Mu.Unlock()
 
@@ -492,10 +550,10 @@ func (m *Mesa) jugarMano(ctx context.Context, jugadoresActivos []*Jugador, numer
 		m.Mu.Unlock()
 		return fmt.Errorf("mesa [ID: %s]: no se pudieron determinar las ciegas de la mano [ID: %s]", m.ID, idMano)
 	}
-	m.aportar(m.Jugadores[sillaChica], m.CfgPartida.CiegaMenor)
-	m.aportar(m.Jugadores[sillaGrande], m.CfgPartida.CiegaMayor)
-	m.apuestaActual = m.CfgPartida.CiegaMayor
-	m.subidaMinima = m.CfgPartida.CiegaMayor
+	m.aportar(m.Jugadores[sillaChica], m.ciegaChica)
+	m.aportar(m.Jugadores[sillaGrande], m.ciegaGrande)
+	m.apuestaActual = m.ciegaGrande
+	m.subidaMinima = m.ciegaGrande
 	primerEnHablar := m.primerEnHablarPreflop(len(jugadoresActivos), sillaChica, sillaGrande)
 	m.Mu.Unlock()
 
@@ -525,7 +583,7 @@ func (m *Mesa) jugarMano(ctx context.Context, jugadoresActivos []*Jugador, numer
 			j.ApuestaRonda = 0
 		}
 		m.apuestaActual = 0
-		m.subidaMinima = m.CfgPartida.CiegaMayor
+		m.subidaMinima = m.ciegaGrande
 		primerPost, hayQuienActue := m.primerEnManoDesdeBoton()
 		m.Mu.Unlock()
 
@@ -606,11 +664,22 @@ func (m *Mesa) repartirPozo(jugadoresActivos []*Jugador, idMano string) error {
 	// siguiente, así que quedarse en 0 es el resultado de una mano, no el fin
 	// de la partida.
 	if !m.CfgPartida.ReponerStack {
+		var caidos []*Jugador
 		for _, j := range jugadoresActivos {
 			if j.Saldo == 0 && j.Activo {
 				j.Activo = false
-				m.ordenEliminacion = append(m.ordenEliminacion, j.ID)
+				caidos = append(caidos, j)
 			}
+		}
+		// Si varios quiebran en la misma mano, cae "antes" el que tenía menos
+		// fichas al empezarla (es la regla estándar de los torneos de poker).
+		// Sin esto el orden dependería de en qué silla estaban sentados, y con
+		// eso se decide quién pasa de fase cuando solo pasan los dos últimos.
+		sort.SliceStable(caidos, func(a, b int) bool {
+			return caidos[a].SaldoInicioMano < caidos[b].SaldoInicioMano
+		})
+		for _, j := range caidos {
+			m.ordenEliminacion = append(m.ordenEliminacion, j.ID)
 		}
 	}
 	estado := m.estadoSinLock()
@@ -662,9 +731,16 @@ func (m *Mesa) resumenFinal(resumen ResumenPartida) ResumenPartida {
 	}
 	sort.SliceStable(ordenados, func(a, b int) bool {
 		ja, jb := ordenados[a], ordenados[b]
-		netoA, netoB := m.netoSinLock(ja), m.netoSinLock(jb)
-		if netoA != netoB {
-			return netoA > netoB
+		// Con reposición de stack se compara lo que ganó cada uno. Sin ella se
+		// compara cuántas fichas tiene: no es lo mismo cuando cada jugador se
+		// sentó con un stack distinto (StackPorJugador), donde la ganancia
+		// ordenaría mal a quien arrancó con más.
+		puntajeA, puntajeB := int64(ja.Saldo), int64(jb.Saldo)
+		if m.CfgPartida.ReponerStack {
+			puntajeA, puntajeB = m.netoSinLock(ja), m.netoSinLock(jb)
+		}
+		if puntajeA != puntajeB {
+			return puntajeA > puntajeB
 		}
 		// Mismo resultado (típicamente 0 fichas, todos eliminados): el que cayó
 		// más tarde va primero.
@@ -678,7 +754,7 @@ func (m *Mesa) resumenFinal(resumen ResumenPartida) ResumenPartida {
 			Nombre:       j.Nombre,
 			Posicion:     i + 1,
 			SaldoFinal:   j.Saldo,
-			SaldoInicial: m.CfgPartida.StackInicial,
+			SaldoInicial: m.CfgPartida.stackDe(j.ID),
 			Neto:         m.netoSinLock(j),
 			Timeouts:     j.Timeouts,
 			ManosJugadas: j.ManosJugadas,
@@ -696,7 +772,7 @@ func (m *Mesa) netoSinLock(j *Jugador) int64 {
 		// empezar la siguiente), así que se agrega acá.
 		return j.NetoAcumulado + int64(j.Saldo) - int64(m.CfgPartida.StackInicial)
 	}
-	return int64(j.Saldo) - int64(m.CfgPartida.StackInicial)
+	return int64(j.Saldo) - int64(m.CfgPartida.stackDe(j.ID))
 }
 
 // contarPuedenActuar cuenta cuántos jugadores en mano todavía pueden tomar
@@ -947,6 +1023,13 @@ func (m *Mesa) estadoSinLock() protocolo.EstadoPublico {
 		pozoTotal = m.Pozo.Total()
 	}
 
+	// Las ciegas vigentes son las de la mano en curso. Antes de que empiece la
+	// primera, todavía no se fijaron y valen las de la configuración.
+	chica, grande := m.ciegaChica, m.ciegaGrande
+	if grande == 0 {
+		chica, grande = m.CfgPartida.ciegasDeLaMano(1)
+	}
+
 	return protocolo.EstadoPublico{
 		IDMano:            m.idManoActual,
 		Etapa:             m.etapaActual,
@@ -954,8 +1037,8 @@ func (m *Mesa) estadoSinLock() protocolo.EstadoPublico {
 		Pozo:              pozoTotal,
 		ApuestaActual:     int64(m.apuestaActual),
 		SubidaMinima:      int64(m.subidaMinima),
-		CiegaChica:        int64(m.CfgPartida.CiegaMenor),
-		CiegaGrande:       int64(m.CfgPartida.CiegaMayor),
+		CiegaChica:        int64(chica),
+		CiegaGrande:       int64(grande),
 		PosicionBoton:     int(m.Boton),
 		Jugadores:         jugadoresPublicos,
 		HistorialAcciones: append([]protocolo.AccionRegistrada(nil), m.historial...),

@@ -30,7 +30,8 @@ arena: [1/6] r001-alice-vs-bob — Alice +12350, Bob -12350
 - [Arquitectura](#arquitectura)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Escribir un bot](#escribir-un-bot)
-- [Correr un torneo](#correr-un-torneo)
+- [Correr el torneo de las bases](#correr-el-torneo-de-las-bases)
+- [Correr un round-robin](#correr-un-round-robin)
 - [Requisitos](#requisitos)
 - [Documentacion](#documentacion)
 - [Reglas del equipo](#reglas-del-equipo)
@@ -59,7 +60,8 @@ round-robin completo. Si eso funciona, todo funciona.
 
 | Binario | Para que |
 | ------- | -------- |
-| `arena` | **El torneo.** Arma los cruces, corre las partidas, produce la clasificacion. |
+| `campeonato` | **El torneo de las bases**: clasificatoria con mesas sorteadas de nuevo en cada ronda y final por eliminacion, con panel web. |
+| `arena` | Un round-robin entre bots conocidos: arma los cruces, corre las partidas, produce la clasificacion. |
 | `mesa` | Una mesa suelta, para conectarle bots a mano y depurar. |
 | `casino` | Cuentas, tokens, bots versionados y ranking historico. |
 | `bot-*` | Bots de ejemplo y sparring. |
@@ -113,6 +115,7 @@ Cuatro modulos que se comunican solo a traves del paquete `protocolo`.
 | **Mesa** | Saldos, turnos, ciegas, validacion de acciones, conexiones | No evalua manos ni guarda cuentas |
 | **Casino** | Cuentas, sesiones, bots y su versionado, estadisticas, ranking | No juega |
 | **Arena** | Emparejamientos, ejecucion de partidas, clasificacion, historiales | No conoce reglas de poker ni cuentas |
+| **Campeonato** | Fases, sorteo de mesas, lobby de bots, fichas entre rondas, panel | No conoce reglas de poker ni cuentas |
 
 El diseño es asi a proposito: el Crupier y la Mesa se pueden testear enteros sin
 abrir un socket, y ni la Mesa ni la Arena importan el Casino (reciben
@@ -126,7 +129,8 @@ abrir un socket, y ni la Mesa ni la Arena importan el Casino (reciben
 ```txt
 pokerFight/
 ├── cmd/                        # Binarios (punto de entrada, sin logica)
-│   ├── arena/                  # Runner de torneos
+│   ├── campeonato/             # Torneo por fases con panel web
+│   ├── arena/                  # Runner de round-robin
 │   ├── mesa/                   # Servidor de una mesa suelta
 │   └── casino/                 # CLI de cuentas, bots y ranking
 │
@@ -157,6 +161,17 @@ pokerFight/
 │   │   ├── clasificacion.go    # Agregacion en la tabla final
 │   │   ├── historial.go        # Historial de manos en JSON Lines
 │   │   └── config.go           # El torneo como archivo JSON
+│   │
+│   ├── campeonato/
+│   │   ├── campeonato.go       # El motor: juega una ronda, avanza de fase, persiste
+│   │   ├── lobby.go            # Un puerto para todos los bots; presencias y reconexion
+│   │   ├── plan.go             # Cuantas mesas y de que tamano tiene cada fase
+│   │   ├── sorteo.go           # Sorteo de mesas
+│   │   ├── config.go           # Fases, ciegas, validacion
+│   │   ├── estado.go           # Lo que se persiste entre rondas
+│   │   ├── inscritos.go        # Bots y credenciales
+│   │   ├── vista.go, panel.go  # Foto del campeonato y API HTTP
+│   │   └── panel.html          # El panel web (se embebe en el binario)
 │   │
 │   ├── casino/
 │   │   ├── casino.go           # Interfaz Casino, Cuenta, Bot, Estadisticas
@@ -265,7 +280,41 @@ Garantias:
 
 ---
 
-## Correr un torneo
+## Correr el torneo de las bases
+
+```bash
+make campeonato-demo     # 24 bots de ejemplo + panel web, todo en esta maquina
+```
+
+El campeonato juega lo que describen las bases: una **clasificatoria** (cada bot
+arranca con 10 000 fichas, mesas de 5 sorteadas de nuevo en cada ronda, ciegas que
+suben, el que se queda sin fichas se elimina) y una **final** por eliminacion hasta
+una mesa final. Desde el **panel** se define la cantidad de fases, de mesas y de
+jugadores por mesa, se ve el plan antes de jugar (`64 → 32 → 16 → 4 → 1`), se lanza
+y se siguen las mesas en vivo.
+
+```bash
+campeonato init                                   # la configuracion de las bases
+campeonato inscribir -csv equipos.csv             # da de alta bots y muestra sus tokens
+campeonato plan -jugadores 64                     # cuantas mesas tendria cada fase
+campeonato servir                                 # servidor de bots (:9000) + panel web
+```
+
+Lo que resuelve:
+
+- **Un solo puerto para todo el torneo** (issue #9): los bots se conectan **una vez**
+  y la arena los mueve de mesa en mesa. El protocolo no cambio.
+- **Bots anonimos**: cada uno recibe un alias aleatorio; ni equipo ni nombre salen de
+  la organizacion.
+- **Si un bot se cae, la arena juega por el** (check o fold) y, cuando vuelve con su
+  token, retoma la misma silla con las mismas fichas.
+- **Se retoma entre dias**: el estado se guarda tras cada ronda.
+
+Referencia completa: [`docs/campeonato.md`](docs/campeonato.md).
+
+---
+
+## Correr un round-robin
 
 ```bash
 ./bin/arena init                          # escribe un torneo.json de ejemplo
@@ -313,7 +362,8 @@ la version con `-race`.
 | [`docs/torneo.md`](docs/torneo.md) | **Participantes** | Como escribir tu bot y competir |
 | [`docs/protocolo.md`](docs/protocolo.md) | **Participantes** | El contrato Mesa ↔ Bot, completo |
 | [`docs/reglas.md`](docs/reglas.md) | Participantes | Reglas de poker implementadas |
-| [`docs/arena.md`](docs/arena.md) | Organizadores | Correr y extender un torneo |
+| [`docs/campeonato.md`](docs/campeonato.md) | Organizadores | El torneo por fases de las bases, con panel web |
+| [`docs/arena.md`](docs/arena.md) | Organizadores | Correr y extender un round-robin |
 | [`docs/interfaces.md`](docs/interfaces.md) | Equipo | Contratos entre modulos. **Documento primario** |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Equipo | Commits, ramas, checklist de PR |
 | [`docs/prompts/`](docs/prompts/) | Equipo | Prompts de IA usados en el proyecto |
@@ -353,6 +403,7 @@ Detalle completo en [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | 9 | Turnos y apuestas individuales (SB / BB / D) | Mesa | ✅ |
 | 10 | Decidir el ganador de la partida | Crupier | ✅ |
 | 11 | Correr un torneo entre bots | Arena | ✅ |
+| 12 | Torneo por fases: clasificatoria, final por eliminacion, mesas y jugadores configurables | Campeonato | ✅ |
 
 ### Limitaciones conocidas
 
@@ -361,11 +412,16 @@ Detalle completo en [`CONTRIBUTING.md`](CONTRIBUTING.md).
   [`docs/arena.md`](docs/arena.md#seguridad).
 - **El Casino no tiene autenticacion real**: `Login` no pide contraseña.
 - **La arena no soporta formatos con rondas dependientes** (eliminacion directa,
-  suizo de verdad): los emparejamientos se calculan todos antes de jugar.
+  suizo de verdad): los emparejamientos se calculan todos antes de jugar. Para eso
+  esta el campeonato.
+- **Una accion tardia de la misma mano se aplica a la jugada siguiente.** Con el
+  plazo de 10 s del campeonato y bots con LLM, ocurre.
+- **El SDK de Go no reconecta solo**: si se cae el socket, `Correr` termina.
+- **El panel no usa HTTPS** y por defecto solo escucha en `127.0.0.1`.
 - **`LevantarJugador` cierra la conexion**: no hay modo espectador.
 
 La lista completa esta en
-[`docs/interfaces.md`](docs/interfaces.md#7-estado-del-proyecto).
+[`docs/interfaces.md`](docs/interfaces.md#8-estado-del-proyecto).
 
 ---
 

@@ -12,3 +12,11 @@ coverage.html
 
 # Base de datos local del Casino
 casino.json
+
+# Credenciales de los bots del campeonato: un token por bot. Quien lo conozca
+# puede jugar en su lugar, asi que no se versiona nunca.
+inscritos*.json
+
+# Estado y historial de manos del campeonato (tiene las cartas de todos).
+/campeonato
+/campeonato-demo
