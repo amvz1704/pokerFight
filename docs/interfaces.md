@@ -18,6 +18,7 @@ bots (externos)  ->  pkg/botsdk  ->  internal/protocolo  <-  internal/mesa
                                            |                      ^
                                            v                      |
                                    internal/almacen        internal/arena --> internal/mesa
+                                                           internal/campeonato --> internal/mesa, internal/arena
 ```
 
 Reglas duras:
@@ -29,7 +30,10 @@ Reglas duras:
 4. `internal/casino` importa `almacen` y `protocolo`. No importa `mesa`.
 5. `internal/arena` importa `mesa` y `crupier`. **No importa `casino`**: igual
    que la Mesa, recibe `ValidarToken` por inyeccion.
-6. `pkg/` es lo unico publico: es lo que pueden importar los bots de los
+6. `internal/campeonato` importa `mesa`, `crupier`, `arena` (solo `Lanzador` e
+   `HistorialArchivos`) y `almacen`. **No importa `casino`**: sus credenciales
+   salen de la lista de inscritos (§7).
+7. `pkg/` es lo unico publico: es lo que pueden importar los bots de los
    participantes, que viven fuera del modulo y por lo tanto no pueden ver
    `internal/`. Por eso `pkg/botsdk/tipos.go` re-exporta como **alias** los
    tipos de `protocolo` que un bot necesita nombrar (`botsdk.Accion`,
@@ -328,6 +332,51 @@ mano y lleva aparte `Jugador.NetoAcumulado`. Cambia que mide la partida:
 Exige `CantidadRondas > 0`: sin eliminacion posible, una partida sin limite de
 manos no termina nunca.
 
+### 4.6 Partidas por fases (`ConfigPartida`)
+
+Un torneo por fases (`internal/campeonato`) necesita que la Mesa haga cuatro cosas
+que una partida suelta no pide. Todas son opcionales y por defecto la Mesa se
+comporta como siempre:
+
+| Campo | Para que |
+|-------|----------|
+| `Ciegas func(numeroMano) (chica, grande)` | Ciegas que suben. Se consulta **una vez por mano**, al repartirla: una mano nunca cambia de ciegas a mitad de camino. |
+| `StackPorJugador map[id]fichas` | Cada jugador se sienta con las fichas que trae de la ronda anterior. |
+| `HastaQueden int` | La partida termina cuando quedan esa cantidad con fichas. Con 2, "pasan los dos ultimos en pie" no sigue hasta el heads-up. |
+| `ReponerStack` | Ya existia (§4.5). |
+
+Consecuencias que conviene saber:
+
+- **La clasificacion ordena por fichas, no por ganancia**, cuando no hay
+  reposicion. Con stacks distintos, ordenar por `saldo - stack` pondria por
+  encima a quien arranco con poco y duplico que a quien arranco con mucho y
+  perdio un poco. `ResumenJugador.Neto` se mide contra el stack **propio**.
+- **Si varios jugadores quiebran en la misma mano**, queda mejor clasificado el
+  que la empezo con mas fichas (`Jugador.SaldoInicioMano`). Sin ese desempate el
+  orden dependeria de la silla, y con eso se decide quien pasa de fase.
+
+### 4.7 Dinero muerto en el pozo
+
+`Pozo.Descomponer` suma al sub-pozo anterior todo tramo sin elegibles
+(`fusionarSinElegibles`). Aparece cuando alguien que se retiro aporto **mas que
+cualquiera de los que siguen en la mano**: la ciega grande vale 320, un rival va
+all-in corto por 261 y la ciega grande se retira. Ese exceso no es de nadie y lo
+gana quien gane el pozo mas alto en disputa.
+
+Antes el tramo quedaba sin dueno y `DecidirGanadores` lo salteaba: las fichas
+desaparecian de la partida. Lo detecto un test de estres con ciegas altas y
+all-ins cortos a la vez (`TestFichasSeConservanConEstrategiasDelCampeonato`); el
+estres con jugadores al azar no lo veia.
+
+### 4.8 Gancho de handshake (`ConfigServidor.AlConectar`)
+
+El Servidor sienta al jugador **antes** de mandarle la bienvenida. En una mesa
+suelta no importa; si quien recibe al jugador lo reparte entre varias mesas (el
+lobby del campeonato), una ronda en curso podria hablarle por el socket antes de
+que reciba su bienvenida, y el bot esperaria otra cosa. `AlConectar(id)` se llama
+cuando el handshake **termino**: es el primer momento en que es seguro usar el
+socket.
+
 ## 5. Contrato Mesa -> Observador
 
 ```go
@@ -373,7 +422,49 @@ hay soporte para formatos donde una ronda dependa del resultado de la anterior
 (eliminacion directa, suizo de verdad); el camino es un metodo opcional nuevo,
 no cambiar el que existe.
 
-## 7. Estado del proyecto
+## 7. Contratos del Campeonato (`internal/campeonato`)
+
+Torneo por fases de las bases del Poker Fight de Bots. Referencia completa en
+[`campeonato.md`](campeonato.md). Los contratos entre modulos:
+
+**Lobby** (`lobby.go`) es un `mesa.MesaInterface` que **no juega**: se lo entrega a
+un `mesa.Servidor` para reutilizar el handshake (version, token, bienvenida) sin
+reescribirlo. `SentarJugador` significa "este jugador ya esta en la sala". Un
+mismo puerto atiende a todos los bots durante todo el campeonato.
+
+**Presencia** (`lobby.go`) implementa `mesa.ConexionMesaJugador` y es lo que se
+sienta en las mesas. A la Mesa le da lo mismo que haya detras: si el bot se cae,
+la presencia contesta `ErrConexionCerrada` y la Mesa juega la accion segura; si
+vuelve con el mismo token, el mismo asiento sigue con el socket nuevo. Reglas:
+
+- `Cerrar()` **no cierra el socket**: la mesa que termina no puede cortar a un bot
+  que va a jugar en otra. Cortar conexiones es cosa del lobby.
+- Una escritura que tarda mas de `maxEscrituraMs` (2 s) se da por desconexion. Un
+  bot que no lee llenaria el buffer del socket, y esperar el plazo de jugada (10 s)
+  en cada difusion de estado frenaria a los otros cuatro de la mesa.
+- Una respuesta que **no es JSON** no desconecta al bot: la mesa juega la accion
+  segura y sigue. El SDK no reintenta, asi que cortarlo por una linea mal formada
+  lo sacaria del campeonato para siempre.
+- Una conexion nueva queda *pendiente* hasta que `AlConectar` la promueve (§4.8).
+
+**Identidad.** Cada inscrito recibe al crearse el estado un **alias aleatorio**
+(`j-a1b2c3`) que es su `id_jugador` y su nombre en todas las mesas. Es estable
+durante el campeonato. Equipo y nombre del bot **no salen de la organizacion**:
+cumple "la arena no revela [...] los nombres de los demas participantes, solo
+identificadores aleatorios". Con semilla, los alias tambien salen de ella: el
+sorteo baraja en orden de alias, y alias distintos en cada corrida harian que la
+misma semilla armara mesas distintas.
+
+**Estado persistido** (`estado.go`, `almacen.JSON`): se escribe tras cada ronda.
+Congela la `Config` al empezar la primera ronda; desde entonces manda ella y no el
+archivo. Una ronda cancelada se descarta **entera**: nunca se aplica un resultado
+parcial.
+
+**Panel** (`panel.go`): API HTTP + pagina embebida. Todo `/api` exige la clave de
+administracion en el encabezado `X-Clave` (no vale por query string: iria a los
+logs). La pagina es estatica y no lleva datos.
+
+## 8. Estado del proyecto
 
 Todas las tareas originales estan implementadas. Lo que sigue son las
 divergencias y limitaciones conocidas:
@@ -384,6 +475,8 @@ divergencias y limitaciones conocidas:
 | Reconexion de un jugador sentado | Resuelta con `ReconectarJugador` (§2.1). |
 | Timeouts por jugador en el resumen | Resuelto: `ResumenJugador.Timeouts`. |
 | `LevantarJugador` cierra la conexion | Sigue asi. No hay modo espectador. |
-| Formatos con rondas dependientes | No soportado (§6). |
+| Formatos con rondas dependientes | La arena no los soporta (§6). `internal/campeonato` si: decide cada ronda con el resultado de la anterior (§7). |
 | Sandbox para bots de terceros | No hay. Ver [`arena.md`](arena.md#seguridad). |
 | Autenticacion real en el Casino | No hay: `Login` no pide contraseña (§4.1). |
+| Respuesta tardia dentro de la misma mano | Una accion que llega pasado el plazo se lee como la respuesta a la **siguiente** solicitud de la misma mano (el `id_mano` no cambia). Con el plazo de 10 s del campeonato y bots con LLM, pasa. El arreglo es un `id_solicitud` que el bot devuelva; no hecho. |
+| El SDK no reconecta | Si el socket se cae, `botsdk.Correr` termina. Las bases piden "dejarlo ejecutandose": hoy cada equipo tiene que reconectar por su cuenta. |

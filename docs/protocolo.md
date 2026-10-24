@@ -86,6 +86,30 @@ respondés a un `estado`, la Mesa lo descarta.
 El cierre del socket por parte de la Mesa es el fin normal de la partida, no un
 error.
 
+### En el campeonato: una conexión, muchas mesas
+
+En el torneo por fases ([`campeonato.md`](campeonato.md)) **el protocolo es el
+mismo**, pero la conexión dura todo el torneo y no una partida: te conectás una
+vez, hacés el handshake una vez, y la arena te va sentando en una mesa distinta en
+cada ronda. Lo que cambia para tu bot:
+
+- Entre mesa y mesa **no llega nada**: tu socket queda abierto y en silencio.
+  Tampoco llega nada si te eliminaron. No es una caída, no cierres.
+- Una mesa nueva empieza con un `mano_inicio` como cualquier otro. Tus fichas y los
+  rivales de `estado.jugadores` cambian; tu `id_jugador` **no**.
+- Tu `id_jugador` es un **alias aleatorio** (`j-a1b2c3`) y los de tus rivales
+  también: no hay nombres de equipo ni de bot. Es estable durante todo el
+  campeonato, así que podés reconocer a un rival que se te cruza en varias rondas,
+  pero no saber quién es.
+- Tu saldo no vuelve a 10 000 entre rondas de la clasificatoria: **lo que ganaste
+  o perdiste te lo llevás**. Las ciegas suben a medida que avanzan las manos
+  (`estado.ciega_grande` lo dice en cada mano).
+- El cierre del socket por parte de la arena es el fin del campeonato **o de la
+  sesión**. Si el torneo sigue otro día, hay que volver a conectarse.
+- **Un mensaje de un `tipo` que no conocés se ignora.** Ya valía para los campos
+  (ver [Transporte](#transporte)); vale igual para tipos de mensaje, que es cómo
+  se agrega algo sin subir la versión.
+
 ---
 
 ## Mensajes Mesa → Bot
@@ -417,6 +441,16 @@ y cada uno sumó un timeout. Reconectar no los borra.
 Dos bots distintos **no pueden compartir token**: el segundo en conectarse se
 toma como una reconexión del primero y el primero queda fuera.
 
+**En el campeonato** reconectar es lo que las bases llaman "hasta que vuelva": la
+arena juega por vos mientras no estás, tu silla sigue ocupada y vas perdiendo las
+ciegas; cuando volvés con tu token, retomás **la misma silla con las mismas
+fichas**, a mitad de ronda si hace falta. Si mandás una línea que no es JSON no te
+desconecta: se toma como una acción inválida y seguís conectado.
+
+Un bot no se reconecta solo: el SDK de Go termina cuando se cae el socket. Si tu
+bot tiene que sobrevivir a un corte de red, la reconexión es cosa tuya (ver
+[`torneo.md`](torneo.md#el-día-del-torneo)).
+
 ---
 
 ## Probar a mano
@@ -455,4 +489,5 @@ partida arranca y vas a ver llegar `mano_inicio` y `solicitar_accion`. Respondé
 - [`bots/ejemplos/javascript/bot.js`](../bots/ejemplos/javascript/bot.js) — lo mismo, con E/S asíncrona.
 - [`pkg/botsdk`](../pkg/botsdk/botsdk.go) — si escribís en Go, no implementes nada de esto: usá el SDK.
 - [`docs/torneo.md`](torneo.md) — cómo inscribir tu bot en el torneo.
+- [`docs/campeonato.md`](campeonato.md) — el torneo por fases de las bases.
 - [`docs/reglas.md`](reglas.md) — las reglas de poker que aplica la Mesa.

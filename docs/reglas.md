@@ -99,6 +99,11 @@ all-in por 50, B y C apuestan 200 cada uno.
 Las fichas de quien se retira **se quedan en el pozo**, pero deja de poder
 ganarlo.
 
+Si quien se retira había puesto **más que cualquiera de los que siguen en la
+mano** (pasa con las ciegas: la grande vale 320, un rival va all-in corto por 261 y
+la ciega grande se retira), ese exceso es dinero muerto y lo gana quien gane el
+pozo más alto en disputa. No vuelve a quien se retiró y no se pierde.
+
 Si alguien apuesta mas de lo que cualquier rival podia cubrir, ese excedente
 forma su propio sub-pozo y **vuelve a el**, gane o pierda la mano: nadie lo
 igualo.

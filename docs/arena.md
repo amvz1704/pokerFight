@@ -4,8 +4,10 @@ La arena es el motor de torneos: arma los emparejamientos, levanta una mesa por
 partida, conecta a los bots, junta los resultados y produce la clasificación.
 Es el equivalente al *engine* de MIT Pokerbots.
 
-Este documento es para quien **organiza** el torneo. Si venís a competir, lo que
-buscás es [`torneo.md`](torneo.md).
+Este documento es para quien **organiza** un round-robin. Si venís a competir, lo que
+buscás es [`torneo.md`](torneo.md). Si lo que querés es el torneo **por fases** de las
+bases (clasificatoria con mesas de 5, final por eliminación, panel web), es otra
+herramienta: [`campeonato.md`](campeonato.md).
 
 - [Arranque rápido](#arranque-rápido)
 - [El archivo de torneo](#el-archivo-de-torneo)

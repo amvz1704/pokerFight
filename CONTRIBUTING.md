@@ -207,7 +207,11 @@ toca los tres no se mergea.
 
 | Quiero... | Voy a... |
 | --------- | -------- |
-| Agregar un formato de torneo | `internal/arena/formato.go` + `RegistrarFormato` |
+| Agregar un formato de round-robin | `internal/arena/formato.go` + `RegistrarFormato` |
+| Cambiar fases, mesas o ciegas del torneo de las bases | `campeonato.json` o el panel; el motor está en `internal/campeonato` |
+| Cambiar cómo se sortean o reparten las mesas | `internal/campeonato/plan.go` (`RepartirMesas`) y `sorteo.go` |
+| Cambiar quién pasa de fase | `internal/campeonato/campeonato.go` (`cerrarClasificatoria`, `aplicarRonda`) |
+| Cambiar el panel | `internal/campeonato/panel.html` (se embebe: hay que recompilar) y `panel.go` |
 | Cambiar como se puntua | `internal/arena/puntuacion.go` + `RegistrarPuntuador` |
 | Correr los bots en contenedores | Implementar `arena.Lanzador` |
 | Mandar las manos a otro lado | Implementar `mesa.ObservadorMano` |
@@ -217,6 +221,7 @@ toca los tres no se mergea.
 | Cambiar que acciones son validas | `internal/mesa/saldo.go` |
 | Cambiar a SQLite | Implementar la interfaz de `internal/almacen` |
 
-Los tres primeros y el cuarto son puntos de extension pensados para eso: no hace
-falta tocar el runner ni el CLI. Estan documentados con ejemplos en
-[`docs/arena.md`](docs/arena.md#extender-la-arena).
+Formato, puntuacion, lanzador y observador son puntos de extension pensados para
+eso: no hace falta tocar el runner ni el CLI. Estan documentados con ejemplos en
+[`docs/arena.md`](docs/arena.md#extender-la-arena). El torneo por fases se
+configura sin tocar codigo: ver [`docs/campeonato.md`](docs/campeonato.md).
