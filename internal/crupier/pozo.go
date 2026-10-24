@@ -107,7 +107,31 @@ func (p *Pozo) Descomponer() []SubPozo {
 		}
 		anterior = tope
 	}
-	return subPozos
+	return fusionarSinElegibles(subPozos)
+}
+
+// fusionarSinElegibles suma al sub-pozo anterior cada tramo que nadie puede
+// ganar.
+//
+// Un tramo así existe cuando alguien que se retiró aportó más de lo que puso
+// cualquiera de los que siguen en la mano. Pasa con las ciegas: la grande vale
+// 320, un rival va all-in corto por 261, y la ciega grande se retira. Esos 59
+// de más (y lo mismo de la chica) son dinero muerto: no son de nadie y los gana
+// el que gane el pozo más alto en disputa. Sin esta fusión el tramo quedaba sin
+// dueño, DecidirGanadores lo salteaba y las fichas desaparecían de la partida.
+//
+// Si el primer tramo no tiene elegibles no hay a quién sumárselo (no queda nadie
+// en la mano): se deja como está, y quien llame decide qué hacer.
+func fusionarSinElegibles(subPozos []SubPozo) []SubPozo {
+	fusionados := make([]SubPozo, 0, len(subPozos))
+	for _, sp := range subPozos {
+		if len(sp.Elegibles) == 0 && len(fusionados) > 0 {
+			fusionados[len(fusionados)-1].Monto += sp.Monto
+			continue
+		}
+		fusionados = append(fusionados, sp)
+	}
+	return fusionados
 }
 
 // Reiniciar limpia el pozo para una nueva mano con la lista de jugadores dada.

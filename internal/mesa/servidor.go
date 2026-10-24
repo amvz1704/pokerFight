@@ -313,6 +313,15 @@ type ConfigServidor struct {
 	// lanzados en paralelo es una carrera. Es lo que usa la arena para fijar
 	// las posiciones de cada enfrentamiento.
 	SillaDe func(idJugador string) (silla int, ok bool)
+
+	// AlConectar, si no es nil, se llama cuando un jugador terminó el handshake:
+	// ya está sentado y ya recibió su bienvenida. Es el primer momento en que es
+	// seguro mandarle otra cosa por el socket.
+	//
+	// Importa para quien reparte las conexiones entre varias mesas (el lobby de
+	// un campeonato): si empezara a hablarle al bot apenas lo sienta, un mensaje
+	// de juego podría llegar antes que la bienvenida, y el bot esperaría otra cosa.
+	AlConectar func(idJugador string)
 }
 
 // Servidor acepta conexiones TCP de bots, hace el handshake y sienta a los
@@ -572,6 +581,9 @@ func (s *Servidor) atender(conexion net.Conn) {
 	}
 
 	s.registrar(id, cx)
+	if s.cfg.AlConectar != nil {
+		s.cfg.AlConectar(id)
+	}
 	if reconexion {
 		s.cfg.Log.Printf("mesa: jugador %s (%s) reconectado desde %s", id, nombre, cx.Direccion())
 		return

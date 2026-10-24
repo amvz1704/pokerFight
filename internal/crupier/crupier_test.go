@@ -539,3 +539,66 @@ func TestDecidirGanadoresRechazaPozoNulo(t *testing.T) {
 		t.Fatal("DecidirGanadores con pozo nulo deberia fallar")
 	}
 }
+
+// TestElDineroMuertoPorEncimaDeTodosNoSeEvapora es el bug que encontro el
+// campeonato: la ciega grande (320) supera lo que pone un all-in corto (261) y
+// el que la pago se retira. Ese exceso no es de ningun jugador en mano; antes
+// formaba un sub-pozo sin elegibles que se salteaba, y las fichas desaparecian.
+func TestElDineroMuertoPorEncimaDeTodosNoSeEvapora(t *testing.T) {
+	pozo := NuevoPozo([]string{"j1", "j2", "j3"})
+	pozo.Apostar("j1", 320) // Ciega grande.
+	pozo.Apostar("j2", 261) // All-in corto.
+	pozo.Apostar("j3", 261) // Paga el all-in.
+	pozo.Fold("j1")
+
+	sub := pozo.Descomponer()
+	if len(sub) != 1 {
+		t.Fatalf("se armaron %d sub-pozos, se esperaba 1 (el exceso se suma al unico en disputa): %+v", len(sub), sub)
+	}
+	if sub[0].Monto != 842 {
+		t.Errorf("el sub-pozo tiene %d fichas, se esperaban 842 (261 + 261 + 320)", sub[0].Monto)
+	}
+
+	res, err := Nuevo().DecidirGanadores([]Participante{
+		{ID: "j2", Mano: manoDe(t, "Kc Kd")},
+		{ID: "j3", Mano: manoDe(t, "2c 2d")},
+	}, cartasDe(t, "Ad 7s 3h Kc 8h"), pozo)
+	if err != nil {
+		t.Fatalf("DecidirGanadores: %v", err)
+	}
+	var repartido int64
+	for _, r := range res.Repartos {
+		repartido += r.Monto
+	}
+	if repartido != pozo.Total() {
+		t.Fatalf("se repartieron %d fichas y el pozo tenia %d: se perdieron %d", repartido, pozo.Total(), pozo.Total()-repartido)
+	}
+}
+
+// TestElExcesoDeUnAllInSigueVolviendoAQuienLoPuso: la fusion no puede tragarse
+// la apuesta no igualada de un jugador que SI sigue en la mano.
+func TestElExcesoDeUnAllInSigueVolviendoAQuienLoPuso(t *testing.T) {
+	pozo := NuevoPozo([]string{"corto", "largo", "retirado"})
+	pozo.Apostar("corto", 100)
+	pozo.Apostar("largo", 400) // 300 que nadie iguala.
+	pozo.Apostar("retirado", 150)
+	pozo.Fold("retirado")
+
+	res, err := Nuevo().DecidirGanadores([]Participante{
+		{ID: "corto", Mano: manoDe(t, "Ac Ad")}, // Gana la mano.
+		{ID: "largo", Mano: manoDe(t, "Kc Kd")},
+	}, cartasDe(t, "2c 7d 9h Ts 3c"), pozo)
+	if err != nil {
+		t.Fatalf("DecidirGanadores: %v", err)
+	}
+
+	recibido := map[string]int64{}
+	for _, r := range res.Repartos {
+		recibido[r.IDJugador] += r.Monto
+	}
+	// "corto" gana lo que alcanzo a cubrir: 100 + 100 + 100 del retirado.
+	// "largo" recupera su exceso y lo que el retirado puso por encima.
+	if recibido["corto"] != 300 || recibido["largo"] != 350 {
+		t.Fatalf("repartos = %v, se esperaban corto=300 y largo=350", recibido)
+	}
+}
